@@ -10,7 +10,7 @@
 // segment that can sneak through -- a path with anything other than
 // exactly one "/" and a UUID on each side simply doesn't match.
 const OWNED_PATH_PATTERN =
-  /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(jpg|jpeg|png|pdf)$/;
+  /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(jpg|jpeg|png|webp|pdf)$/;
 
 export function isValidOwnedPath(path: string, userId: string): boolean {
   const match = OWNED_PATH_PATTERN.exec(path);

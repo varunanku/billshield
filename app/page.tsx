@@ -46,6 +46,17 @@ function extensionFor(file: File): string {
   return file.name.split(".").pop() || "bin";
 }
 
+// HEIC/HEIF (the default format for iPhone photos) isn't a supported
+// upload type. Browsers are inconsistent about reporting its mime type --
+// Safari/iOS often leaves file.type blank for a HEIC picked via a file
+// input -- so check the extension too, not just file.type.
+function isHeicFile(file: File): boolean {
+  const type = file.type.toLowerCase();
+  if (type === "image/heic" || type === "image/heif") return true;
+  const name = file.name.toLowerCase();
+  return name.endsWith(".heic") || name.endsWith(".heif");
+}
+
 const ROLE_LABELS: Record<LineRole, string> = {
   charge: "Charge",
   tax: "Tax",
@@ -80,6 +91,18 @@ export default function UploadPage() {
     total.trim().length > 0 &&
     lines.length > 0 &&
     lines.every((l) => l.label.trim().length > 0 && l.amount.trim().length > 0);
+
+  function handleFileSelected(selected: File | null) {
+    if (selected && isHeicFile(selected)) {
+      setFile(null);
+      setStage({
+        name: "error",
+        message: "HEIC photos aren't supported yet. Please upload a JPEG, PNG, WEBP or PDF (a screenshot works too).",
+      });
+      return;
+    }
+    setFile(selected);
+  }
 
   async function handleUpload(e: React.FormEvent) {
     e.preventDefault();
@@ -200,11 +223,12 @@ export default function UploadPage() {
             Please mask your name, address, phone number and account number before
             uploading -- we also run an automatic backstop, but masking it yourself first is safer.
           </p>
+          <p>Supported files: JPEG, PNG, WEBP or PDF (a screenshot works too). HEIC photos aren&apos;t supported yet.</p>
           <form onSubmit={handleUpload} style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             <input
               type="file"
-              accept="image/*,application/pdf"
-              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+              accept="image/jpeg,image/png,image/webp,application/pdf"
+              onChange={(e) => handleFileSelected(e.target.files?.[0] ?? null)}
               required
             />
             <button type="submit" disabled={!file}>

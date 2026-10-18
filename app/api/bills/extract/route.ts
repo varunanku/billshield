@@ -66,16 +66,25 @@ export async function POST(request: Request) {
 
   // Trust the blob's stored content-type (set by the browser at upload
   // time) over the path extension, falling back to the extension only if
-  // the content-type came back generic/missing.
+  // the content-type came back generic/missing. isValidOwnedPath already
+  // restricted path to one of these four extensions, so the fallback map
+  // only needs to cover them.
+  const EXTENSION_MIME: Record<string, string> = {
+    jpg: "image/jpeg",
+    jpeg: "image/jpeg",
+    png: "image/png",
+    webp: "image/webp",
+    pdf: "application/pdf",
+  };
+  const pathExt = path.toLowerCase().split(".").pop() ?? "";
   let mimeType = fileBlob.type;
-  const isPdfByPath = path.toLowerCase().endsWith(".pdf");
   if (!mimeType || mimeType === "application/octet-stream") {
-    mimeType = isPdfByPath ? "application/pdf" : "image/jpeg";
+    mimeType = EXTENSION_MIME[pathExt] ?? "image/jpeg";
   }
-  const isPdf = mimeType === "application/pdf" || isPdfByPath;
+  const isPdf = mimeType === "application/pdf" || pathExt === "pdf";
   const isImage = mimeType.startsWith("image/");
   if (!isPdf && !isImage) {
-    return json({ success: false, reason: "bad_request", message: "Please upload an image (PNG/JPEG) or a PDF." }, 400);
+    return json({ success: false, reason: "bad_request", message: "Please upload a JPEG, PNG, WEBP or PDF." }, 400);
   }
 
   const bytes = Buffer.from(await fileBlob.arrayBuffer());
