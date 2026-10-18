@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { maskPII } from "@/lib/mask";
-import { computeBillChecks, LINE_ROLES, type BillLine, type BillChecks } from "@/lib/bill-checks";
+import { computeBillChecks, toPersistedLines, LINE_ROLES, type BillLine, type BillChecks, type PersistedLine } from "@/lib/bill-checks";
 
 export const maxDuration = 30;
 
@@ -14,12 +14,10 @@ type ConfirmPayload = {
   line_items: BillLine[];
 };
 
-type StoredLineItem = { label: string; amount: number };
-
 type ApiResponse =
   | {
       success: true;
-      bill: { id: string; provider: string; billDate: string; total: number; lineItems: (StoredLineItem & { role: BillLine["role"] })[] };
+      bill: { id: string; provider: string; billDate: string; total: number; lineItems: PersistedLine[] };
       checks: BillChecks;
       notice?: string;
     }
@@ -77,12 +75,12 @@ export async function POST(request: Request) {
   const checks = computeBillChecks(line_items, total);
 
   const maskedProvider = maskPII(provider);
-  // Payment-role lines are stored with the literal label "Amount Paid"
-  // (docs/schema.md), so a later feature can identify them by that
-  // convention alone -- there's no role column to persist.
-  const maskedLineItems: StoredLineItem[] = line_items.map((li) => ({
-    label: li.role === "payment" ? "Amount Paid" : maskPII(li.label),
-    amount: li.amount,
+  // toPersistedLines decides which rows exist and their amount sign/label
+  // convention (see lib/bill-checks.ts); masking the label text is still
+  // this route's job, skipped for the literal "Amount Paid" relabel.
+  const maskedLineItems: PersistedLine[] = toPersistedLines(line_items).map((li) => ({
+    ...li,
+    label: li.role === "payment" ? li.label : maskPII(li.label),
   }));
 
   const bytes = Buffer.from(await file.arrayBuffer());
@@ -140,7 +138,7 @@ export async function POST(request: Request) {
         provider: maskedProvider,
         billDate: bill_date,
         total,
-        lineItems: maskedLineItems.map((li, i) => ({ ...li, role: line_items[i].role })),
+        lineItems: maskedLineItems,
       },
       checks,
     },

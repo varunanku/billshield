@@ -22,6 +22,32 @@ export type BillChecks = {
 
 const EPSILON = 0.01; // floating-point rounding only, not a business tolerance
 
+export type PersistedLine = { label: string; amount: number; role: LineRole };
+
+// line_items has no role column, so storage has to encode role into label +
+// amount alone, in a way a later reader (e.g. verdict logic) can recover
+// without ever needing role back:
+// - balance/subtotal lines are dropped entirely. They're shown on the
+//   review screen but never summed, and a stored row with nothing marking
+//   it would be indistinguishable from a charge once it's just a row.
+// - discount lines are stored with a NEGATED amount, so a later reader can
+//   sum every stored line except the one labelled "Amount Paid" and get the
+//   correct billed total, without needing to know which role produced which
+//   row.
+// - payment lines are relabelled to the literal "Amount Paid"
+//   (docs/schema.md's documented convention).
+// Label text still needs masking by the caller -- this function only
+// decides which rows exist and what their amount/label convention is.
+export function toPersistedLines(lineItems: BillLine[]): PersistedLine[] {
+  return lineItems
+    .filter((li) => li.role !== "balance" && li.role !== "subtotal")
+    .map((li) => ({
+      label: li.role === "payment" ? "Amount Paid" : li.label,
+      amount: li.role === "discount" ? -li.amount : li.amount,
+      role: li.role,
+    }));
+}
+
 function sumByRole(lineItems: BillLine[], role: LineRole): number {
   return lineItems.filter((li) => li.role === role).reduce((s, li) => s + li.amount, 0);
 }
