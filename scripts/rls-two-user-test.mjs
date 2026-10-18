@@ -54,7 +54,7 @@ const TEST_FILE_NAME = `rls-test-${stamp}.txt`;
 
 async function signIn(email) {
   const c = createClient(url, anonKey, { auth: { autoRefreshToken: false, persistSession: false } });
-  const { data, error } = await c.auth.signInWithPassword({ email, password });
+  const { error } = await c.auth.signInWithPassword({ email, password });
   if (error) throw error;
   return c;
 }

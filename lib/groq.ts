@@ -4,6 +4,8 @@
 // GROQ_API_KEY never reaches the browser; this module is only imported
 // from Route Handlers.
 
+import { LINE_ROLES, type LineRole } from "./bill-checks";
+
 const GROQ_MODEL = "qwen/qwen3.8-27b";
 const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
 
@@ -11,7 +13,7 @@ export type ExtractedBill = {
   provider: string | null;
   bill_date: string | null;
   total: number | null;
-  line_items: { label: string; amount: number }[];
+  line_items: { label: string; amount: number; role: LineRole }[];
 };
 
 export type GroqExtractResult =
@@ -25,15 +27,23 @@ const EXTRACTION_PROMPT = `You are reading a bill or receipt image. Return ONLY 
   "provider": string or null,
   "bill_date": string (YYYY-MM-DD) or null,
   "total": number or null,
-  "line_items": [ { "label": string, "amount": number } ]
+  "line_items": [ { "label": string, "amount": number, "role": string } ]
 }
+
+"role" must be exactly one of: "charge", "tax", "discount", "payment", "balance", "subtotal".
+- "charge": a fee or service charge that is part of what's owed.
+- "tax": a GST/tax line.
+- "discount": an amount subtracted or credited, reducing what's owed (not a tax).
+- "payment": an amount actually paid or received (e.g. "Paid Amount", "Amount Received").
+- "balance": an outstanding, due, or credit balance (e.g. "Outstanding Amount", "Balance Due").
+- "subtotal": a running or sub total line (not the final grand total -- that's the separate "total" field above).
 
 Rules:
 - Only report what is actually printed on the bill. Never guess, infer or compute a value that is not legible.
 - If a field is missing or illegible, use null (for provider/bill_date/total) or omit the line item.
 - "total" is the single grand total amount printed on the bill.
-- "line_items" are the individual charge lines (label + amount) as printed, in the order they appear.
-- Do not add up, multiply or otherwise calculate anything yourself -- only transcribe printed numbers.
+- "line_items" are the individual lines (label + amount + role) as printed, in the order they appear.
+- Your only job for each line is to transcribe its printed label and amount and classify its role. Do not add up, multiply, net out, or otherwise calculate anything yourself.
 - Do not invent a category, tax rate, or support contact.`;
 
 export async function extractBillFromImages(images: Buffer[]): Promise<GroqExtractResult> {
@@ -115,9 +125,13 @@ function coerceExtractedBill(value: unknown): ExtractedBill | null {
       const label = typeof item.label === "string" ? item.label : null;
       const amount = typeof item.amount === "number" ? item.amount : null;
       if (label === null || amount === null) return null;
-      return { label, amount };
+      // Default to "charge" rather than dropping the line, so nothing the
+      // model read gets silently lost -- the user can fix a wrong role on
+      // the review screen, but can't fix a line that never showed up.
+      const role: LineRole = LINE_ROLES.includes(item.role as LineRole) ? (item.role as LineRole) : "charge";
+      return { label, amount, role };
     })
-    .filter((x): x is { label: string; amount: number } => x !== null);
+    .filter((x): x is { label: string; amount: number; role: LineRole } => x !== null);
 
   return {
     provider: typeof v.provider === "string" ? v.provider : null,
