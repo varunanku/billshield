@@ -32,11 +32,19 @@ type EditableLine = { label: string; amount: string; role: LineRole };
 
 type Stage =
   | { name: "upload" }
+  | { name: "uploading" }
   | { name: "extracting" }
   | { name: "reviewing"; notice: string | null }
   | { name: "confirming" }
   | { name: "done"; bill: ConfirmedBill; checks: BillChecks }
   | { name: "error"; message: string; notice?: string };
+
+function extensionFor(file: File): string {
+  if (file.type === "application/pdf") return "pdf";
+  const fromType = file.type.split("/")[1];
+  if (fromType) return fromType;
+  return file.name.split(".").pop() || "bin";
+}
 
 const ROLE_LABELS: Record<LineRole, string> = {
   charge: "Charge",
@@ -51,6 +59,7 @@ export default function UploadPage() {
   const router = useRouter();
   const supabase = createClient();
   const [file, setFile] = useState<File | null>(null);
+  const [uploadedPath, setUploadedPath] = useState<string | null>(null);
   const [stage, setStage] = useState<Stage>({ name: "upload" });
 
   const [provider, setProvider] = useState("");
@@ -72,17 +81,44 @@ export default function UploadPage() {
     lines.length > 0 &&
     lines.every((l) => l.label.trim().length > 0 && l.amount.trim().length > 0);
 
-  async function handleExtract(e: React.FormEvent) {
+  async function handleUpload(e: React.FormEvent) {
     e.preventDefault();
     if (!file) return;
 
+    setStage({ name: "uploading" });
+
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+    if (userError || !user) {
+      setStage({ name: "error", message: "Please sign in again." });
+      return;
+    }
+
+    // ponytail: the file lands in storage here, before any review/confirm --
+    // unavoidable given Vercel's 4.5MB function body limit (the file has to
+    // go straight from the browser to storage, not through our API). If the
+    // user abandons the flow before confirming, this file is now orphaned
+    // (no bill row ever points at it). Add a cleanup job if that piles up.
+    const path = `${user.id}/${crypto.randomUUID()}.${extensionFor(file)}`;
+    const { error: uploadError } = await supabase.storage
+      .from("bills")
+      .upload(path, file, { contentType: file.type || "application/octet-stream", upsert: false });
+
+    if (uploadError) {
+      setStage({ name: "error", message: `Couldn't upload your file: ${uploadError.message}` });
+      return;
+    }
+    setUploadedPath(path);
     setStage({ name: "extracting" });
 
-    const formData = new FormData();
-    formData.append("file", file);
-
     try {
-      const res = await fetch("/api/bills/extract", { method: "POST", body: formData });
+      const res = await fetch("/api/bills/extract", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path }),
+      });
       const data: ExtractResponse = await res.json();
 
       if (!data.success) {
@@ -103,18 +139,21 @@ export default function UploadPage() {
   }
 
   async function handleConfirm() {
-    if (!file || !canConfirm) return;
+    if (!uploadedPath || !canConfirm) return;
     setStage({ name: "confirming" });
 
-    const formData = new FormData();
-    formData.append("file", file);
-    formData.append(
-      "data",
-      JSON.stringify({ provider, bill_date: billDate, total: parsedTotal, line_items: parsedLines })
-    );
-
     try {
-      const res = await fetch("/api/bills/confirm", { method: "POST", body: formData });
+      const res = await fetch("/api/bills/confirm", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          path: uploadedPath,
+          provider,
+          bill_date: billDate,
+          total: parsedTotal,
+          line_items: parsedLines,
+        }),
+      });
       const data: ConfirmResponse = await res.json();
 
       if (!data.success) {
@@ -129,6 +168,7 @@ export default function UploadPage() {
 
   function startOver() {
     setFile(null);
+    setUploadedPath(null);
     setProvider("");
     setBillDate("");
     setTotal("");
@@ -160,7 +200,7 @@ export default function UploadPage() {
             Please mask your name, address, phone number and account number before
             uploading -- we also run an automatic backstop, but masking it yourself first is safer.
           </p>
-          <form onSubmit={handleExtract} style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <form onSubmit={handleUpload} style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             <input
               type="file"
               accept="image/*,application/pdf"
@@ -174,6 +214,7 @@ export default function UploadPage() {
         </>
       )}
 
+      {stage.name === "uploading" && <p>Uploading...</p>}
       {stage.name === "extracting" && <p>Reading your bill...</p>}
 
       {stage.name === "reviewing" && (

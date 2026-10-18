@@ -1,13 +1,13 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { maskPII } from "@/lib/mask";
+import { isValidOwnedPath } from "@/lib/storage-paths";
 import { computeBillChecks, toPersistedLines, LINE_ROLES, type BillLine, type BillChecks, type PersistedLine } from "@/lib/bill-checks";
 
 export const maxDuration = 30;
 
-const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
-
 type ConfirmPayload = {
+  path: string;
   provider: string;
   bill_date: string;
   total: number;
@@ -19,19 +19,20 @@ type ApiResponse =
       success: true;
       bill: { id: string; provider: string; billDate: string; total: number; lineItems: PersistedLine[] };
       checks: BillChecks;
-      notice?: string;
     }
-  | { success: false; reason: "bad_request" | "unauthorized" | "rate_limited" | "server_error"; message: string };
+  | { success: false; reason: "bad_request" | "unauthorized" | "server_error"; message: string };
 
 function json(body: ApiResponse, status: number) {
   return NextResponse.json(body, { status });
 }
 
 // Stores what the user confirmed on the review screen -- "This matches my
-// paper bill". Re-validates and re-computes everything server-side (the
-// client's live preview is never trusted as the final answer), masks text
-// right at this storage boundary, then writes to the DB and the private
-// bucket. Nothing before this point is stored.
+// paper bill". The file itself is already in the bills bucket (uploaded
+// directly by the browser before extraction); this route only re-validates
+// and re-computes the bill data server-side (the client's live preview is
+// never trusted as the final answer), masks text right at this storage
+// boundary, then writes the DB rows. Nothing before this point touches the
+// database.
 export async function POST(request: Request) {
   const supabase = await createClient();
   const {
@@ -42,35 +43,19 @@ export async function POST(request: Request) {
     return json({ success: false, reason: "unauthorized", message: "Please sign in first." }, 401);
   }
 
-  const form = await request.formData().catch(() => null);
-  const file = form?.get("file");
-  const dataRaw = form?.get("data");
-
-  if (!form || !(file instanceof File) || typeof dataRaw !== "string") {
-    return json({ success: false, reason: "bad_request", message: "Missing file or bill data." }, 400);
-  }
-
-  if (file.size > MAX_UPLOAD_BYTES) {
-    return json({ success: false, reason: "bad_request", message: "That file is too large (max 20MB)." }, 400);
-  }
-  const isPdf = file.type === "application/pdf";
-  const isImage = file.type.startsWith("image/");
-  if (!isPdf && !isImage) {
-    return json({ success: false, reason: "bad_request", message: "Please upload an image (PNG/JPEG) or a PDF." }, 400);
-  }
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(dataRaw);
-  } catch {
-    return json({ success: false, reason: "bad_request", message: "Bill data wasn't valid JSON." }, 400);
-  }
-
+  const parsed = await request.json().catch(() => null);
   const validated = validatePayload(parsed);
   if (!validated.ok) {
     return json({ success: false, reason: "bad_request", message: validated.message }, 400);
   }
-  const { provider, bill_date, total, line_items } = validated.data;
+  const { path, provider, bill_date, total, line_items } = validated.data;
+
+  // bills.file_path is about to be set to this path -- it must be this
+  // user's own upload, not one they typed in pointing at someone else's
+  // file. user.id comes from the session above, never from the request body.
+  if (!isValidOwnedPath(path, user.id)) {
+    return json({ success: false, reason: "unauthorized", message: "That file doesn't belong to you." }, 401);
+  }
 
   const checks = computeBillChecks(line_items, total);
 
@@ -82,19 +67,6 @@ export async function POST(request: Request) {
     ...li,
     label: li.role === "payment" ? li.label : maskPII(li.label),
   }));
-
-  const bytes = Buffer.from(await file.arrayBuffer());
-  const ext = isPdf ? "pdf" : file.type.split("/")[1] || "bin";
-  const path = `${user.id}/${crypto.randomUUID()}.${ext}`;
-
-  const { error: uploadError } = await supabase.storage.from("bills").upload(path, bytes, {
-    contentType: file.type,
-    upsert: false,
-  });
-  if (uploadError) {
-    console.error("Storage upload failed:", uploadError);
-    return json({ success: false, reason: "server_error", message: "Couldn't save the file. Please try again." }, 500);
-  }
 
   const { data: bill, error: billError } = await supabase
     .from("bills")
@@ -152,6 +124,9 @@ function validatePayload(value: unknown): { ok: true; data: ConfirmPayload } | {
   }
   const v = value as Record<string, unknown>;
 
+  const path = typeof v.path === "string" ? v.path : "";
+  if (!path) return { ok: false, message: "No uploaded file path was given." };
+
   const provider = typeof v.provider === "string" ? v.provider.trim() : "";
   if (!provider) return { ok: false, message: "Please enter the provider name." };
 
@@ -182,5 +157,5 @@ function validatePayload(value: unknown): { ok: true; data: ConfirmPayload } | {
     line_items.push({ label, amount, role });
   }
 
-  return { ok: true, data: { provider, bill_date, total, line_items } };
+  return { ok: true, data: { path, provider, bill_date, total, line_items } };
 }

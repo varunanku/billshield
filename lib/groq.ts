@@ -46,18 +46,26 @@ Rules:
 - Your only job for each line is to transcribe its printed label and amount and classify its role. Do not add up, multiply, net out, or otherwise calculate anything yourself.
 - Do not invent a category, tax rate, or support contact.`;
 
-export async function extractBillFromImages(images: Buffer[]): Promise<GroqExtractResult> {
-  const content: Array<
-    | { type: "text"; text: string }
-    | { type: "image_url"; image_url: { url: string } }
-  > = [{ type: "text", text: EXTRACTION_PROMPT }];
+export type ImageInput = { bytes: Buffer; mimeType: string };
 
+type ContentPart = { type: "text"; text: string } | { type: "image_url"; image_url: { url: string } };
+
+// Pure and exported so the data-URL-per-image logic (in particular: using
+// each image's own real mime type, not a hardcoded one) can be asserted
+// directly without a network call -- see lib/groq.test.mjs.
+export function buildImageContent(images: ImageInput[]): ContentPart[] {
+  const content: ContentPart[] = [{ type: "text", text: EXTRACTION_PROMPT }];
   for (const image of images) {
     content.push({
       type: "image_url",
-      image_url: { url: `data:image/png;base64,${image.toString("base64")}` },
+      image_url: { url: `data:${image.mimeType};base64,${image.bytes.toString("base64")}` },
     });
   }
+  return content;
+}
+
+export async function extractBillFromImages(images: ImageInput[]): Promise<GroqExtractResult> {
+  const content = buildImageContent(images);
 
   let res: Response;
   try {
