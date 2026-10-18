@@ -15,6 +15,29 @@ create table public.users (
   created_at timestamptz not null default now()
 );
 
+-- Sync trigger: a public.users row is created the moment someone signs up,
+-- straight from auth.users, so the app never has to do it itself.
+-- security definer + a pinned search_path (and schema-qualified names) so
+-- it can't be tricked into resolving to an attacker-created object in a
+-- different schema, and so it can insert into public.users regardless of
+-- RLS (it runs as the function owner, not the signing-up user).
+create function public.handle_new_auth_user()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  insert into public.users (id, email)
+  values (new.id, new.email);
+  return new;
+end;
+$$;
+
+create trigger on_auth_user_created
+  after insert on auth.users
+  for each row execute function public.handle_new_auth_user();
+
 -- 2. bills --------------------------------------------------------------
 -- Header facts only; individual charges live in line_items.
 create table public.bills (
@@ -216,3 +239,41 @@ revoke execute on function public.bill_owned_by_current_user(uuid) from public;
 revoke execute on function public.message_links_belong_to_bill(uuid, uuid, uuid) from public;
 grant execute on function public.bill_owned_by_current_user(uuid) to authenticated;
 grant execute on function public.message_links_belong_to_bill(uuid, uuid, uuid) to authenticated;
+
+-- Storage: private bills bucket -----------------------------------
+-- bills.file_path points into here. Objects are stored under
+-- "<user_id>/<filename>", and policies key off that first path segment --
+-- the same per-user ownership model as the tables above. public = false,
+-- so a file is only ever reachable through an authorized request, never
+-- a public URL.
+insert into storage.buckets (id, name, public)
+values ('bills', 'bills', false)
+on conflict (id) do nothing;
+
+alter table storage.objects enable row level security;
+
+create policy "bills_bucket_select_own" on storage.objects
+  for select using (
+    bucket_id = 'bills'
+    and (storage.foldername(name))[1] = auth.uid()::text
+  );
+create policy "bills_bucket_insert_own" on storage.objects
+  for insert with check (
+    bucket_id = 'bills'
+    and (storage.foldername(name))[1] = auth.uid()::text
+  );
+create policy "bills_bucket_update_own" on storage.objects
+  for update
+  using (
+    bucket_id = 'bills'
+    and (storage.foldername(name))[1] = auth.uid()::text
+  )
+  with check (
+    bucket_id = 'bills'
+    and (storage.foldername(name))[1] = auth.uid()::text
+  );
+create policy "bills_bucket_delete_own" on storage.objects
+  for delete using (
+    bucket_id = 'bills'
+    and (storage.foldername(name))[1] = auth.uid()::text
+  );
