@@ -3,7 +3,15 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import { computeBillChecks, LINE_ROLES, EPSILON, type BillLine, type LineRole, type BillChecks } from "@/lib/bill-checks";
+import {
+  computeBillChecks,
+  removeFirstMatch,
+  LINE_ROLES,
+  EPSILON,
+  type BillLine,
+  type LineRole,
+  type BillChecks,
+} from "@/lib/bill-checks";
 
 type ExtractedBill = {
   provider: string | null;
@@ -168,8 +176,8 @@ function ChecksSummary({
       )}
 
       {checks.warnings.map((w, i) => (
-        <p key={i} style={{ color: "#721c24" }}>
-          ⚠ &quot;{w.lineLabel}&quot; ({w.amount.toFixed(2)}): {w.message}
+        <p key={i} style={{ color: "#856404" }}>
+          Note: &quot;{w.lineLabel}&quot; ({w.amount.toFixed(2)}) -- {w.message}
         </p>
       ))}
 
@@ -327,13 +335,12 @@ export default function UploadPage() {
   // Removes the one line a checkpoint suggestion pointed at. Matched by
   // label + amount rather than index, since the suggestion comes from
   // computeBillChecks's own re-derivation of the line list, not from an
-  // index into `lines` directly.
+  // index into `lines` directly. removeFirstMatch removes only the first
+  // match -- two genuinely identical lines must not both vanish.
   function removeLineByLabelAmount(label: string, amount: number) {
-    setLines((prev) => {
-      const index = prev.findIndex((l) => l.label === label && Math.abs(Number(l.amount) - amount) <= EPSILON);
-      if (index === -1) return prev;
-      return prev.filter((_, i) => i !== index);
-    });
+    setLines((prev) =>
+      removeFirstMatch(prev, (l) => l.label === label && Math.abs(Number(l.amount) - amount) <= EPSILON)
+    );
   }
 
   async function handleSignOut() {

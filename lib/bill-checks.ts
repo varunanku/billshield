@@ -204,20 +204,35 @@ function computeCheckpoints(lineItems: BillLine[]): Checkpoint[] {
 // model computing the gap between two numbers it read and presenting that
 // computed result as if it were its own printed line (see the fabricated
 // "Lpsc: 5.77" line found in testing -- 11460.00 - 11454.23 = 5.77 exactly).
+//
+// Only fires for a line positioned BEFORE the subtotal it would bridge to
+// the total. A line positioned AFTER a subtotal (arrears, LPSC, a late
+// charge) is exactly where a real bridging charge legitimately sits -- and
+// by arithmetic necessity, a single real bridging line's amount equals that
+// same gap. Warning on that position would flag real arrears every single
+// time, not just fabricated ones; there's no way to tell them apart by
+// arithmetic alone once the line is where a real one is supposed to be, so
+// this only watches the position where a coincidental match is genuinely
+// suspicious -- before the subtotal, where a charge has no legitimate
+// reason to equal a gap it comes before.
 function computeSuspiciousGapWarnings(lineItems: BillLine[], total: number): SuspiciousGapWarning[] {
-  const subtotalAmounts = lineItems.filter((li) => li.role === "subtotal").map((li) => li.amount);
+  const subtotals = lineItems
+    .map((li, index) => ({ li, index }))
+    .filter((entry) => entry.li.role === "subtotal");
   const warnings: SuspiciousGapWarning[] = [];
-  for (const li of lineItems) {
-    if (li.role !== "charge") continue;
-    const matchesAGap = subtotalAmounts.some((s) => Math.abs(li.amount - (total - s)) <= EPSILON);
+  lineItems.forEach((li, index) => {
+    if (li.role !== "charge") return;
+    const matchesAGap = subtotals.some(
+      (s) => index < s.index && Math.abs(li.amount - (total - s.li.amount)) <= EPSILON
+    );
     if (matchesAGap) {
       warnings.push({
         lineLabel: li.label,
         amount: li.amount,
-        message: "This amount equals the gap between the total and a subtotal. Check it is actually printed on your bill.",
+        message: "This line makes the total add up exactly. Confirm it is printed on your bill.",
       });
     }
-  }
+  });
   return warnings;
 }
 
@@ -291,4 +306,13 @@ export function computeBillChecks(lineItems: BillLine[], total: number): BillChe
     taxIncludedNote,
     statement,
   };
+}
+
+// Removes only the first match, never every matching entry -- used by the
+// review screen's "remove this line" button, where two genuinely identical
+// lines (same label and amount) must not both vanish on one click.
+export function removeFirstMatch<T>(items: T[], predicate: (item: T) => boolean): T[] {
+  const index = items.findIndex(predicate);
+  if (index === -1) return items;
+  return items.filter((_, i) => i !== index);
 }
