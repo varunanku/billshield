@@ -4,7 +4,7 @@
 // GROQ_API_KEY never reaches the browser; this module is only imported
 // from Route Handlers.
 
-import { LINE_ROLES, type LineRole } from "./bill-checks";
+import { LINE_ROLES, type LineRole } from "./bill-checks.ts";
 
 const GROQ_MODEL = "qwen/qwen3.8-27b";
 const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
@@ -30,13 +30,40 @@ const EXTRACTION_PROMPT = `You are reading a bill or receipt image. Return ONLY 
   "line_items": [ { "label": string, "amount": number, "role": string } ]
 }
 
-"role" must be exactly one of: "charge", "tax", "discount", "payment", "balance", "subtotal".
+Extract EVERY printed row of the charges/fees table that has its own printed
+amount -- not just the headline rows. Many bills itemize a charge into
+several components (for example, a surcharge or adjustment charged
+separately on a fixed portion and an energy/usage portion): if the bill
+prints "PPAC on Fixed Charge: 89.43" and "PPAC on Energy Charge: 1113.65" as
+two separate rows, extract both as two separate line items, each with its
+own printed label and amount -- do not merge them, and do not skip either
+one because a different row already covers a related total.
+
+Transcribe each label exactly as printed (same wording, same abbreviations),
+not a paraphrase or a cleaned-up version.
+
+Never output an amount that is not itself printed as its own standalone
+figure next to a label. If you are not sure an amount is genuinely its own
+printed line (as opposed to something you would need to add, subtract, or
+infer to produce), omit that line entirely rather than guess.
+
+"role" must be exactly one of: "charge", "tax", "discount", "payment", "balance", "subtotal", "info".
 - "charge": a fee or service charge that is part of what's owed.
 - "tax": a GST/tax line.
 - "discount": an amount subtracted or credited, reducing what's owed (not a tax).
 - "payment": an amount actually paid or received (e.g. "Paid Amount", "Amount Received").
 - "balance": an outstanding, due, or credit balance (e.g. "Outstanding Amount", "Balance Due").
 - "subtotal": a running or sub total line (not the final grand total -- that's the separate "total" field above).
+- "info": a non-monetary printed number that is not itself an amount owed or
+  paid -- units consumed, kW/kVA, meter readings, a percentage rate, a
+  tariff slab's unit count, or any other quantity that happens to have a
+  number next to it but is not a charge. If a tariff/usage table breaks a
+  charge down into slabs (e.g. "0-200 units @ Rs 3 = 633.00", "200-400
+  units @ Rs 4.50 = 949.50", ...), give each individual slab row the role
+  "info" (even though it has its own printed amount) and instead extract
+  the table's own printed section total (e.g. "Total Energy Charge:
+  7863.50") as a single "charge" line -- don't extract both the slabs and
+  their total, since summing both would double count.
 
 Rules:
 - Only report what is actually printed on the bill. Never guess, infer or compute a value that is not legible.
@@ -77,7 +104,7 @@ export async function extractBillFromImages(images: ImageInput[]): Promise<GroqE
       },
       body: JSON.stringify({
         model: GROQ_MODEL,
-        temperature: 0.1,
+        temperature: 0,
         response_format: { type: "json_object" },
         messages: [{ role: "user", content }],
       }),

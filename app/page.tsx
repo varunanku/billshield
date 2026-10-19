@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import { computeBillChecks, LINE_ROLES, type BillLine, type LineRole, type BillChecks } from "@/lib/bill-checks";
+import { computeBillChecks, LINE_ROLES, EPSILON, type BillLine, type LineRole, type BillChecks } from "@/lib/bill-checks";
 
 type ExtractedBill = {
   provider: string | null;
@@ -64,7 +64,66 @@ const ROLE_LABELS: Record<LineRole, string> = {
   payment: "Payment",
   balance: "Balance",
   subtotal: "Subtotal",
+  info: "Info",
 };
+
+// Shared between the live review-screen preview and the saved "done"
+// summary -- same checks, same wording, two points in the flow.
+function ChecksSummary({ checks, total }: { checks: BillChecks; total: number }) {
+  return (
+    <div style={{ marginTop: "0.75rem" }}>
+      <p>
+        Sum of charge + tax − discount lines: <strong>{checks.billedSum.toFixed(2)}</strong>
+        {" vs printed total "}
+        <strong>{total.toFixed(2)}</strong>
+      </p>
+      {checks.arithmeticIssue ? (
+        <p style={{ color: "#856404" }}>
+          These lines don&apos;t add up to the printed total, so a line may be missing or misread. Compare with your
+          paper bill.
+        </p>
+      ) : (
+        <p style={{ color: "#155724" }}>✓ These lines add up to the printed total.</p>
+      )}
+
+      {checks.checkpoints.length > 0 && (
+        <div>
+          <p style={{ marginBottom: 4 }}>Checkpoints:</p>
+          <ul style={{ marginTop: 0 }}>
+            {checks.checkpoints.map((c, i) => {
+              const offBy = Math.abs(c.gap) > EPSILON;
+              return (
+                <li key={i} style={{ color: offBy ? "#856404" : "#155724" }}>
+                  {c.label}: expected {c.expected.toFixed(2)}, got {c.actual.toFixed(2)}
+                  {offBy
+                    ? ` -- these don't match (gap of ${c.gap.toFixed(2)}), so a line in this section may be missing or misread.`
+                    : " -- matches"}
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
+
+      {checks.warnings.map((w, i) => (
+        <p key={i} style={{ color: "#721c24" }}>
+          ⚠ &quot;{w.lineLabel}&quot; ({w.amount.toFixed(2)}): {w.message}
+        </p>
+      ))}
+
+      {checks.payment && (
+        <p>
+          Payment check: billed {checks.billedSum.toFixed(2)} vs paid {checks.payment.amountPaid.toFixed(2)} --{" "}
+          {checks.payment.verdict === "overpaid"
+            ? `overpaid by ${Math.abs(checks.payment.signedDifference).toFixed(2)}`
+            : checks.payment.verdict === "dispute"
+            ? `underpaid by ${checks.payment.signedDifference.toFixed(2)}`
+            : "paid in full"}
+        </p>
+      )}
+    </div>
+  );
+}
 
 export default function UploadPage() {
   const router = useRouter();
@@ -294,26 +353,7 @@ export default function UploadPage() {
             </tbody>
           </table>
 
-          <p style={{ marginTop: "0.75rem" }}>
-            Sum of charge + tax − discount lines: <strong>{livePreview.billedSum.toFixed(2)}</strong>
-            {" vs printed total "}
-            <strong>{parsedTotal.toFixed(2)}</strong>
-            {livePreview.arithmeticIssue ? (
-              <span style={{ color: "#721c24" }}> -- differs by {livePreview.arithmeticDifference.toFixed(2)}</span>
-            ) : (
-              <span style={{ color: "#155724" }}> -- matches</span>
-            )}
-          </p>
-          {livePreview.payment && (
-            <p>
-              Payment check: billed {livePreview.billedSum.toFixed(2)} vs paid {livePreview.payment.amountPaid.toFixed(2)} --{" "}
-              {livePreview.payment.verdict === "overpaid"
-                ? `overpaid by ${Math.abs(livePreview.payment.signedDifference).toFixed(2)}`
-                : livePreview.payment.verdict === "dispute"
-                ? `underpaid by ${livePreview.payment.signedDifference.toFixed(2)}`
-                : "paid in full"}
-            </p>
-          )}
+          <ChecksSummary checks={livePreview} total={parsedTotal} />
 
           <button onClick={handleConfirm} disabled={!canConfirm} style={{ marginTop: "1rem" }}>
             This matches my paper bill
@@ -352,24 +392,8 @@ export default function UploadPage() {
               </tr>
             </tbody>
           </table>
-          <p style={{ marginTop: "0.75rem" }}>
-            {stage.checks.arithmeticIssue ? (
-              <span style={{ color: "#721c24" }}>
-                Arithmetic-proven issue: charge/tax/discount lines differ from the printed total by {stage.checks.arithmeticDifference.toFixed(2)}.
-              </span>
-            ) : (
-              <span style={{ color: "#155724" }}>✓ The charge/tax/discount lines add up to the printed total.</span>
-            )}
-          </p>
-          {stage.checks.payment && (
-            <p>
-              {stage.checks.payment.verdict === "overpaid" &&
-                `You appear to have overpaid by ${Math.abs(stage.checks.payment.signedDifference).toFixed(2)}.`}
-              {stage.checks.payment.verdict === "dispute" &&
-                `You appear to have underpaid (or been billed more) by ${stage.checks.payment.signedDifference.toFixed(2)}.`}
-              {stage.checks.payment.verdict === "even" && "Amount paid matches what was billed."}
-            </p>
-          )}
+          <ChecksSummary checks={stage.checks} total={stage.bill.total} />
+
           <button onClick={startOver} style={{ marginTop: "1rem" }}>
             Upload another bill
           </button>
