@@ -1,39 +1,52 @@
 @import "tailwindcss";
 
-/* "Verified receipt": warm paper, near-black ink, exactly one accent per
-   meaning. Emerald = verified/clean. Amber = check this. Brick = confirmed
-   error (verdict screen only -- never used for routine warnings). Full dark
-   mode via prefers-color-scheme, same accent roles, lightened for contrast
-   on a dark ground. */
+/* "Confident fintech": clean white, vivid blue primary, bold flat accent
+   colors (not pastel-on-everything) -- a tool people trust with their
+   money, not a vintage receipt. Full dark mode via prefers-color-scheme,
+   same accent roles, brightened for contrast on a dark ground.
+   Variable names (paper/card/ink/emerald/amber/brick) are historical --
+   values below are the new palette; brick now means "error red". */
 :root {
-  --paper: #faf7f2;
+  --paper: #fafbfc;
   --card: #ffffff;
-  --ink: #1a1816;
-  --ink-muted: #6b6560;
-  --line: #e4ddd2;
+  --ink: #0f172a;
+  --ink-muted: #475569;
+  --line: #e2e8f0;
 
-  --emerald: #0f766e;
-  --emerald-soft: #0f766e1a;
-  --amber: #8a5a0a;
-  --amber-soft: #8a5a0a1a;
-  --brick: #9f3225;
-  --brick-soft: #9f32251a;
+  --primary: #2563eb;
+  --primary-hover: #1d4ed8;
+  --primary-soft: #eff6ff;
+
+  --emerald: #059669;
+  --emerald-soft: #ecfdf5;
+  --amber: #d97706;
+  --amber-soft: #fffbeb;
+  --brick: #dc2626;
+  --brick-soft: #fef2f2;
+
+  --shadow-card: 0 2px 8px rgba(0, 0, 0, 0.06);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --paper: #1c1a17;
-    --card: #242220;
-    --ink: #f0ece4;
-    --ink-muted: #a8a19a;
-    --line: #3a3630;
+    --paper: #0f172a;
+    --card: #1e293b;
+    --ink: #f1f5f9;
+    --ink-muted: #94a3b8;
+    --line: #334155;
 
-    --emerald: #2dd4bf;
-    --emerald-soft: #2dd4bf26;
-    --amber: #e3a542;
-    --amber-soft: #e3a54226;
-    --brick: #e2695c;
-    --brick-soft: #e2695c26;
+    --primary: #3b82f6;
+    --primary-hover: #60a5fa;
+    --primary-soft: #2563eb26;
+
+    --emerald: #10b981;
+    --emerald-soft: #10b98126;
+    --amber: #f59e0b;
+    --amber-soft: #f59e0b26;
+    --brick: #ef4444;
+    --brick-soft: #ef444426;
+
+    --shadow-card: 0 2px 8px rgba(0, 0, 0, 0.3);
   }
 }
 
@@ -43,14 +56,18 @@
   --color-ink: var(--ink);
   --color-ink-muted: var(--ink-muted);
   --color-line: var(--line);
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-soft: var(--primary-soft);
   --color-emerald: var(--emerald);
   --color-emerald-soft: var(--emerald-soft);
   --color-amber: var(--amber);
   --color-amber-soft: var(--amber-soft);
   --color-brick: var(--brick);
   --color-brick-soft: var(--brick-soft);
-  --font-sans: var(--font-geist-sans);
+  --font-sans: var(--font-inter);
   --font-serif: var(--font-fraunces);
+  --font-mono: var(--font-geist-mono);
 }
 
 body {
@@ -58,38 +75,61 @@ body {
   color: var(--ink);
 }
 
-/* Receipt card: a subtle perforated edge, top and bottom, like a torn
-   ticket stub. Tailwind has no primitive for this -- a small repeating
-   radial-gradient cutout is the standard CSS trick. */
-.receipt-edge {
-  position: relative;
-}
-.receipt-edge::before,
-.receipt-edge::after {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  height: 10px;
-  background-image: radial-gradient(circle at 10px 0, transparent 9px, var(--paper) 9.5px);
-  background-size: 20px 20px;
-  background-repeat: repeat-x;
-  pointer-events: none;
-}
-.receipt-edge::before {
-  top: -1px;
-}
-.receipt-edge::after {
-  bottom: -1px;
-  transform: scaleY(-1);
+/* Shared card shadow (crisp 1px border comes from border-line directly in
+   markup) -- Tailwind's shadow-sm doesn't match the brief's exact value. */
+.shadow-card {
+  box-shadow: var(--shadow-card);
 }
 
-/* Dotted leader between a line's label and its amount, like a table of
-   contents -- an in-between flex element with a dotted bottom border. */
-.leader {
-  flex: 1 1 auto;
-  border-bottom: 1px dotted var(--line);
-  margin: 0 0.5rem;
-  transform: translateY(-0.35em);
-  min-width: 0.75rem;
+/* Subtle entrance for cards/sections as they mount. Respects reduced-motion. */
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.animate-fade-up {
+  animation: fade-up 300ms ease-out both;
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.animate-fade-in {
+  animation: fade-in 200ms ease-out both;
+}
+
+/* A verdict checkmark/icon "draws in" via stroke-dashoffset -- paired with
+   a matching stroke-dasharray set inline on the path (see CheckIcon etc.). */
+@keyframes draw-in {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+.animate-draw-in path,
+.animate-draw-in circle {
+  stroke-dasharray: 48;
+  stroke-dashoffset: 48;
+  animation: draw-in 500ms 100ms ease-out forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-fade-up,
+  .animate-fade-in,
+  .animate-draw-in path,
+  .animate-draw-in circle {
+    animation: none;
+    opacity: 1;
+    transform: none;
+    stroke-dashoffset: 0;
+  }
 }

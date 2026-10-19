@@ -118,6 +118,29 @@ const ROLE_LABELS: Record<LineRole, string> = {
   opening: "Opening",
 };
 
+// Small colored pill per line role -- blue for a charge, amber for tax,
+// green for a payment, gray for everything else (info/balance/subtotal/
+// opening/discount), matched to the role's real-world "weight" rather
+// than one color per role.
+const ROLE_BADGE_CLASSES: Record<LineRole, string> = {
+  charge: "bg-primary-soft text-primary",
+  tax: "bg-amber-soft text-amber",
+  payment: "bg-emerald-soft text-emerald",
+  discount: "bg-emerald-soft text-emerald",
+  balance: "bg-line text-ink-muted",
+  subtotal: "bg-line text-ink-muted",
+  info: "bg-line text-ink-muted",
+  opening: "bg-line text-ink-muted",
+};
+
+function RoleBadge({ role }: { role: LineRole }) {
+  return (
+    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${ROLE_BADGE_CLASSES[role]}`}>
+      {ROLE_LABELS[role]}
+    </span>
+  );
+}
+
 function money(n: number) {
   return n.toFixed(2);
 }
@@ -144,14 +167,26 @@ function ProgressSteps({ current }: { current: 1 | 2 | 3 }) {
           <li key={label} className="flex items-center gap-2">
             <span
               className={[
-                "flex h-6 w-6 items-center justify-center rounded-full text-xs font-medium transition-colors",
-                done ? "bg-emerald text-paper" : active ? "bg-ink text-paper" : "bg-card border border-line text-ink-muted",
+                "flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold transition-colors",
+                done
+                  ? "bg-emerald text-white"
+                  : active
+                  ? "bg-primary text-white animate-pulse"
+                  : "bg-card border border-line text-ink-muted",
               ].join(" ")}
             >
-              {done ? "✓" : step}
+              {done ? (
+                <svg viewBox="0 0 16 16" fill="none" className="h-3.5 w-3.5" aria-hidden>
+                  <path d="M3.5 8.5 L6.5 11.5 L12.5 4.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              ) : (
+                step
+              )}
             </span>
-            <span className={active ? "font-medium text-ink" : "text-ink-muted"}>{label}</span>
-            {i < steps.length - 1 && <span className="mx-1 h-px w-6 bg-line" aria-hidden />}
+            <span className={active ? "font-bold text-ink" : "text-ink-muted"}>{label}</span>
+            {i < steps.length - 1 && (
+              <span className={`mx-1 h-0.5 w-6 rounded-full transition-colors ${done ? "bg-emerald" : "bg-line"}`} aria-hidden />
+            )}
           </li>
         );
       })}
@@ -170,10 +205,38 @@ function PencilButton({ onClick, label }: { onClick: () => void; label: string }
       type="button"
       onClick={onClick}
       aria-label={label}
-      className="min-h-6 min-w-6 rounded-full text-ink-muted transition-colors hover:text-ink"
+      className="flex min-h-11 min-w-11 items-center justify-center rounded-full text-ink-muted transition-colors hover:bg-primary-soft hover:text-primary"
     >
       ✎
     </button>
+  );
+}
+
+// Verdict banner icons -- left-aligned per outcome. The checkmark draws in
+// via the shared .animate-draw-in keyframe (stroke-dasharray/offset).
+function ShieldCheckIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" className={`animate-draw-in ${className ?? ""}`} aria-hidden>
+      <path d="M12 2.5 L20.5 6 V12 C20.5 17 17 20.5 12 22 C7 20.5 3.5 17 3.5 12 V6 Z" stroke="currentColor" strokeWidth="1.75" />
+      <path d="M8.5 12.2 L10.8 14.5 L15.5 9.3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+function AlertTriangleIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" className={className} aria-hidden>
+      <path d="M12 3.5 L21.5 20.5 H2.5 Z" stroke="currentColor" strokeWidth="1.75" strokeLinejoin="round" />
+      <path d="M12 9.5 V14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+      <circle cx="12" cy="17.2" r="1" fill="currentColor" />
+    </svg>
+  );
+}
+function XCircleIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" className={`animate-draw-in ${className ?? ""}`} aria-hidden>
+      <circle cx="12" cy="12" r="9.5" stroke="currentColor" strokeWidth="1.75" />
+      <path d="M8.5 8.5 L15.5 15.5 M15.5 8.5 L8.5 15.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    </svg>
   );
 }
 
@@ -229,9 +292,9 @@ function ChecksSummary({ checks, total }: { checks: BillChecks; total: number })
       {showGenericArithmetic && (
         <>
           <p className="text-ink-muted">
-            Charge + tax − discount: <span className="tabular-nums text-ink">{money(checks.billedSum)}</span>
+            Charge + tax − discount: <span className="font-mono tabular-nums text-ink">{money(checks.billedSum)}</span>
             {" vs printed total "}
-            <span className="tabular-nums text-ink">{money(total)}</span>
+            <span className="font-mono tabular-nums text-ink">{money(total)}</span>
           </p>
           {checks.arithmeticIssue ? (
             <p className="text-amber">
@@ -279,15 +342,22 @@ function ChecksSummary({ checks, total }: { checks: BillChecks; total: number })
 }
 
 const inputClasses =
-  "min-h-11 w-full rounded-md border border-line bg-card px-3 py-2 text-ink outline-none transition-colors focus-visible:ring-2 focus-visible:ring-emerald focus-visible:border-emerald";
+  "min-h-11 w-full rounded-lg border border-line bg-card px-3 py-2 text-ink outline-none transition-colors focus-visible:ring-2 focus-visible:ring-primary focus-visible:border-primary";
 // Every button gets a visible pressed state (darker + a slight scale down)
 // on :active, on top of the hover/focus treatment -- not just a hover
 // effect, which touch devices never see anyway.
 const buttonPrimary =
-  "min-h-11 rounded-md bg-emerald px-4 py-2 font-medium text-paper transition-all duration-150 hover:opacity-90 active:scale-[0.97] active:brightness-90 disabled:opacity-40 disabled:active:scale-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald focus-visible:ring-offset-2 focus-visible:ring-offset-paper";
+  "min-h-11 rounded-lg bg-primary px-4 py-2 font-medium text-white transition-all duration-150 hover:bg-primary-hover active:scale-[0.97] disabled:opacity-40 disabled:active:scale-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-paper";
+// Reserved for the one action that's specifically a confirmation of
+// something already sent/done ("I've sent it") -- every other primary
+// action uses the vivid-blue buttonPrimary above.
+const buttonSuccess =
+  "min-h-11 rounded-lg bg-emerald px-4 py-2 font-medium text-white transition-all duration-150 hover:opacity-90 active:scale-[0.97] active:brightness-90 disabled:opacity-40 disabled:active:scale-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald focus-visible:ring-offset-2 focus-visible:ring-offset-paper";
 const buttonSecondary =
-  "min-h-11 rounded-md border border-line px-4 py-2 font-medium transition-all duration-150 hover:bg-card active:scale-[0.97] active:bg-line disabled:opacity-40 disabled:active:scale-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald";
-const card = "rounded-xl border border-line bg-card p-5 shadow-sm";
+  "min-h-11 rounded-lg border border-line px-4 py-2 font-medium text-ink transition-all duration-150 hover:bg-primary-soft hover:border-primary active:scale-[0.97] disabled:opacity-40 disabled:active:scale-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary";
+const buttonDestructive =
+  "min-h-11 rounded-lg px-2 text-sm text-ink-muted transition-colors hover:text-brick";
+const card = "rounded-lg border border-line bg-card p-5 shadow-card animate-fade-up";
 
 export default function UploadPage() {
   const router = useRouter();
@@ -935,14 +1005,14 @@ export default function UploadPage() {
       : null;
 
   return (
-    <main className="mx-auto w-full max-w-[900px] px-4 py-8 sm:px-6 sm:py-12">
+    <main className="mx-auto w-full max-w-[960px] px-4 py-8 sm:px-6 sm:py-12">
       <div className="mb-6 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <svg viewBox="0 0 32 32" fill="none" className="h-7 w-7" aria-hidden>
-            <path d="M16 2.5 L28 7 V15.5 C28 23 22.5 27.5 16 29.5 C9.5 27.5 4 23 4 15.5 V7 Z" className="fill-emerald" />
+            <path d="M16 2.5 L28 7 V15.5 C28 23 22.5 27.5 16 29.5 C9.5 27.5 4 23 4 15.5 V7 Z" className="fill-primary" />
             <path
               d="M11 16.2 L14.3 19.5 L21.2 11.8"
-              stroke="var(--paper)"
+              stroke="#ffffff"
               strokeWidth="2.4"
               strokeLinecap="round"
               strokeLinejoin="round"
@@ -984,11 +1054,16 @@ export default function UploadPage() {
                 handleFileSelected(e.dataTransfer.files?.[0] ?? null);
               }}
               className={[
-                "flex min-h-48 cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed px-4 py-10 text-center transition-colors",
-                isDraggingOver ? "border-emerald bg-emerald-soft" : "border-line bg-card",
+                "flex min-h-48 cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed border-primary px-4 py-10 text-center transition-colors",
+                isDraggingOver ? "bg-primary-soft" : "bg-card hover:bg-primary-soft",
               ].join(" ")}
             >
-              <svg viewBox="0 0 24 24" fill="none" className="h-8 w-8 text-ink-muted" aria-hidden>
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                className={`h-8 w-8 text-primary ${isDraggingOver ? "animate-pulse" : ""}`}
+                aria-hidden
+              >
                 <path
                   d="M12 16V4m0 0 4 4m-4-4-4 4M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"
                   stroke="currentColor"
@@ -1017,13 +1092,13 @@ export default function UploadPage() {
       {stage.name === "uploading" && <p className="py-6 text-center text-ink-muted">Uploading...</p>}
       {stage.name === "extracting" && (
         <div className="flex flex-col items-center gap-3 py-10">
-          <div className="h-8 w-8 animate-spin rounded-full border-2 border-line border-t-emerald" aria-hidden />
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-line border-t-primary" aria-hidden />
           <p className="text-ink-muted">Reading your bill...</p>
         </div>
       )}
 
       {stage.name === "reviewing" && (
-        <section className="receipt-edge mx-auto mt-2 flex w-full max-w-[800px] flex-col gap-4 rounded-xl border border-line bg-card p-5 shadow-sm">
+        <section className="mx-auto mt-2 flex w-full max-w-[800px] flex-col gap-4 rounded-lg border border-line bg-card p-5 shadow-card animate-fade-up">
           <button type="button" onClick={backToUpload} className="self-start text-sm text-ink-muted transition-colors hover:text-ink">
             ← Back to upload
           </button>
@@ -1083,7 +1158,7 @@ export default function UploadPage() {
               />
             ) : (
               <div className="flex items-center gap-2">
-                <span className="font-medium tabular-nums">{total || "(not set)"}</span>
+                <span className="font-medium font-mono tabular-nums">{total || "(not set)"}</span>
                 <PencilButton label="Edit printed total" onClick={() => setEditingField("total")} />
               </div>
             )}
@@ -1100,14 +1175,16 @@ export default function UploadPage() {
 
               if (!isEditingLine) {
                 return (
-                  <div key={i} className="flex items-center justify-between gap-2 py-3">
-                    <div className="flex flex-1 flex-wrap items-baseline gap-x-2">
+                  <div key={i} className={`flex items-center justify-between gap-2 px-2 py-3 ${i % 2 === 1 ? "bg-slate-50" : ""}`}>
+                    <div className="flex flex-1 flex-wrap items-center gap-x-2">
                       <span>{line.label || "(no label)"}</span>
-                      <span className="text-xs text-ink-muted">{ROLE_LABELS[line.role]}</span>
-                      {line.unrecognized && <span className="text-xs text-amber">unfamiliar</span>}
+                      <RoleBadge role={line.role} />
+                      {line.unrecognized && (
+                        <span className="rounded-full bg-amber-soft px-2 py-0.5 text-xs font-medium text-amber">unfamiliar</span>
+                      )}
                     </div>
                     <div className="flex items-center gap-2">
-                      <span className="tabular-nums">{line.amount}</span>
+                      <span className="font-mono text-base tabular-nums">{line.amount}</span>
                       {checkpoint && <CheckpointStamp checkpoint={checkpoint} onRemoveSuggestion={removeLineByLabelAmount} />}
                       <PencilButton label={`Edit ${line.label || "line"}`} onClick={() => setEditingField(`line-${i}`)} />
                     </div>
@@ -1140,7 +1217,7 @@ export default function UploadPage() {
                     <input
                       value={line.amount}
                       onChange={(e) => updateLine(i, { amount: e.target.value })}
-                      className={`${inputClasses} tabular-nums text-right sm:w-32`}
+                      className={`${inputClasses} font-mono tabular-nums text-right sm:w-32`}
                     />
                     {checkpoint && <CheckpointStamp checkpoint={checkpoint} onRemoveSuggestion={removeLineByLabelAmount} />}
                   </div>
@@ -1158,7 +1235,7 @@ export default function UploadPage() {
                     type="button"
                     onClick={() => deleteLine(i)}
                     aria-label={`Delete ${line.label || "line"}`}
-                    className="min-h-11 rounded-md px-2 text-sm text-ink-muted transition-colors hover:text-brick"
+                    className={buttonDestructive}
                   >
                     Delete
                   </button>
@@ -1188,7 +1265,7 @@ export default function UploadPage() {
           <ChecksSummary checks={livePreview} total={parsedTotal} />
 
           <div className="rounded-lg border border-line p-4">
-            <p className="mb-2 font-medium">What were you promised? <span className="font-normal text-ink-muted">(optional)</span></p>
+            <p className="mb-2 font-bold">What were you promised? <span className="font-normal text-ink-muted">(optional)</span></p>
             <div className="flex flex-col gap-3">
               <label className="flex flex-col gap-1 text-sm">
                 Plan or description
@@ -1205,7 +1282,7 @@ export default function UploadPage() {
                   value={promiseAmount}
                   onChange={(e) => setPromiseAmount(e.target.value)}
                   placeholder="e.g. 299.00"
-                  className={`${inputClasses} tabular-nums`}
+                  className={`${inputClasses} font-mono tabular-nums`}
                 />
               </label>
             </div>
@@ -1234,49 +1311,59 @@ export default function UploadPage() {
           </button>
 
           {stage.verdict.outcome === "clean" && (
-            <div className="rounded-xl bg-emerald-soft p-5">
-              <p className="font-serif text-xl text-emerald">Your bill checks out.</p>
-              <p className="mt-1 text-ink-muted">
-                Reconciled total: <span className="tabular-nums font-medium text-ink">{money(stage.verdict.reconciledTotal)}</span>
-              </p>
-              {stage.verdict.roundingNote && (
-                <p className="mt-1 text-sm text-ink-muted">
-                  Rs {money(stage.verdict.roundingNote.gap)} is the bill&apos;s rounding to Rs{" "}
-                  {money(stage.verdict.roundingNote.roundedTotal)}.
+            <div className="flex items-start gap-3 rounded-lg bg-emerald p-5 text-white animate-fade-up">
+              <ShieldCheckIcon className="mt-1 h-7 w-7 shrink-0" />
+              <div>
+                <p className="text-[28px] font-bold leading-tight">Your bill checks out.</p>
+                <p className="mt-1 text-white/90">
+                  Reconciled total: <span className="font-mono tabular-nums font-medium">{money(stage.verdict.reconciledTotal)}</span>
                 </p>
-              )}
+                {stage.verdict.roundingNote && (
+                  <p className="mt-1 text-sm text-white/80">
+                    Rs {money(stage.verdict.roundingNote.gap)} is the bill&apos;s rounding to Rs{" "}
+                    {money(stage.verdict.roundingNote.roundedTotal)}.
+                  </p>
+                )}
+              </div>
             </div>
           )}
           {stage.verdict.outcome === "confirmed_error" && (
-            <div className="rounded-xl bg-brick-soft p-5">
-              <p className="font-serif text-xl text-brick">
-                {stage.verdict.reason === "overpaid"
-                  ? `You overpaid Rs ${money(Math.abs(stage.verdict.facts.gap))}.`
-                  : stage.verdict.reason === "promise_mismatch"
-                  ? stage.verdict.facts.gap >= 0
-                    ? `You were charged Rs ${money(Math.abs(stage.verdict.facts.gap))} more than you were promised.`
-                    : `You were promised Rs ${money(Math.abs(stage.verdict.facts.gap))} more than you were charged.`
-                  : `Rs ${money(Math.abs(stage.verdict.facts.gap))} on this bill doesn't add up.`}
-              </p>
-              {stage.verdict.facts.reconcilingBalanceLabel && (
-                <p className="mt-1 text-sm text-ink-muted">
-                  This matches the &quot;{stage.verdict.facts.reconcilingBalanceLabel}&quot; line on your bill.
+            <div className="flex items-start gap-3 rounded-lg bg-brick p-5 text-white animate-fade-up">
+              <XCircleIcon className="mt-1 h-7 w-7 shrink-0" />
+              <div>
+                <p className="text-[28px] font-bold leading-tight">
+                  {stage.verdict.reason === "overpaid"
+                    ? `You overpaid Rs ${money(Math.abs(stage.verdict.facts.gap))}.`
+                    : stage.verdict.reason === "promise_mismatch"
+                    ? stage.verdict.facts.gap >= 0
+                      ? `You were charged Rs ${money(Math.abs(stage.verdict.facts.gap))} more than you were promised.`
+                      : `You were promised Rs ${money(Math.abs(stage.verdict.facts.gap))} more than you were charged.`
+                    : `Rs ${money(Math.abs(stage.verdict.facts.gap))} on this bill doesn't add up.`}
                 </p>
-              )}
+                {stage.verdict.facts.reconcilingBalanceLabel && (
+                  <p className="mt-1 text-sm text-white/80">
+                    This matches the &quot;{stage.verdict.facts.reconcilingBalanceLabel}&quot; line on your bill.
+                  </p>
+                )}
+              </div>
             </div>
           )}
           {stage.verdict.outcome === "cannot_verify" && (
-            <div className="rounded-xl bg-amber-soft p-5">
-              <p className="font-serif text-xl text-amber">We couldn&apos;t read every line of this bill.</p>
-              <p className="mt-1 text-ink-muted">
-                Gap: <span className="tabular-nums font-medium text-ink">{money(Math.abs(stage.verdict.facts.gap))}</span> --
-                compare the line items above with your paper bill for anything missing or misread.
-              </p>
+            <div className="flex items-start gap-3 rounded-lg bg-amber p-5 text-ink animate-fade-up">
+              <AlertTriangleIcon className="mt-1 h-7 w-7 shrink-0" />
+              <div>
+                <p className="text-[28px] font-bold leading-tight">We couldn&apos;t read every line of this bill.</p>
+                <p className="mt-1">
+                  Gap: <span className="font-mono tabular-nums font-medium">{money(Math.abs(stage.verdict.facts.gap))}</span> --
+                  compare the line items above with your paper bill for anything missing or misread.
+                </p>
+              </div>
             </div>
           )}
           {stage.verdict.outcome === "unexplained" && (
-            <div className="rounded-xl bg-amber-soft p-5">
-              <p className="font-serif text-xl text-amber">
+            <div className="flex items-start gap-3 rounded-lg bg-amber p-5 text-ink animate-fade-up">
+              <AlertTriangleIcon className="mt-1 h-7 w-7 shrink-0" />
+              <p className="text-[28px] font-bold leading-tight">
                 {stage.verdict.facts.disputedLines.length > 0
                   ? `You flagged "${stage.verdict.facts.disputedLines[0].label}" (Rs ${money(
                       stage.verdict.facts.disputedLines[0].amount
@@ -1286,9 +1373,9 @@ export default function UploadPage() {
             </div>
           )}
 
-          <div className="receipt-edge mx-auto flex w-full max-w-[800px] flex-col gap-3 rounded-xl border border-line bg-card p-5 shadow-sm">
+          <div className="mx-auto flex w-full max-w-[800px] flex-col gap-3 rounded-lg border border-line bg-card p-5 shadow-card animate-fade-up">
             <p>
-              <strong>{stage.bill.provider}</strong> <span className="text-ink-muted">-- {stage.bill.billDate}</span>
+              <strong className="font-bold">{stage.bill.provider}</strong> <span className="text-ink-muted">-- {stage.bill.billDate}</span>
               {isSuspiciousBillDate(stage.bill.billDate) && (
                 <span className="ml-2 text-xs text-amber">⚠ Check this date -- it looks off.</span>
               )}
@@ -1298,22 +1385,21 @@ export default function UploadPage() {
               {stage.bill.lineItems.map((li, i) => {
                 const checkpoint = li.role === "subtotal" ? checkpointFor(stage.checks, li.label) : undefined;
                 return (
-                  <div key={i} className="flex items-baseline py-2">
-                    <span>{li.label}</span>
-                    <span className="leader" aria-hidden />
-                    <span className="tabular-nums">{money(li.amount)}</span>
-                    {checkpoint && (
-                      <span className="ml-2">
-                        <CheckpointStamp checkpoint={checkpoint} />
-                      </span>
-                    )}
+                  <div key={i} className={`flex items-center justify-between gap-2 px-2 py-2 ${i % 2 === 1 ? "bg-slate-50" : ""}`}>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span>{li.label}</span>
+                      <RoleBadge role={li.role} />
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-base tabular-nums">{money(li.amount)}</span>
+                      {checkpoint && <CheckpointStamp checkpoint={checkpoint} />}
+                    </div>
                   </div>
                 );
               })}
-              <div className="flex items-baseline border-t border-ink/20 pt-2 font-medium">
+              <div className="flex items-center justify-between px-2 pt-2 font-bold">
                 <span>Total</span>
-                <span className="leader" aria-hidden />
-                <span className="tabular-nums">{money(stage.bill.total)}</span>
+                <span className="font-mono text-base tabular-nums">{money(stage.bill.total)}</span>
               </div>
             </div>
 
@@ -1327,7 +1413,7 @@ export default function UploadPage() {
 
           {verdictDraftsEmail(stage.verdict) && (
             <div className={card}>
-              <p className="mb-2 font-medium">{stage.verdict.outcome === "confirmed_error" ? "Dispute email" : "Inquiry email"}</p>
+              <p className="mb-2 font-bold">{stage.verdict.outcome === "confirmed_error" ? "Dispute email" : "Inquiry email"}</p>
               {draftingEmail && <p className="text-ink-muted">Drafting...</p>}
               {emailError && <p className="text-brick">{emailError}</p>}
               {emailDraft && (
@@ -1337,7 +1423,7 @@ export default function UploadPage() {
                     <input
                       value={emailDraft.subject}
                       onChange={(e) => updateEmailSubject(e.target.value)}
-                      className={inputClasses}
+                      className={`${inputClasses} font-bold`}
                     />
                   </label>
                   <label className="flex flex-col gap-1 text-sm">
@@ -1358,7 +1444,7 @@ export default function UploadPage() {
                         Open in email app
                       </button>
                     </a>
-                    <button type="button" onClick={handleMarkSent} disabled={emailActionTaken !== null} className={buttonPrimary}>
+                    <button type="button" onClick={handleMarkSent} disabled={emailActionTaken !== null} className={buttonSuccess}>
                       {emailActionTaken ? "Marked as sent" : "I've sent it"}
                     </button>
                   </div>
@@ -1379,7 +1465,12 @@ export default function UploadPage() {
                         ))}
                       </select>
                     </label>
-                    <button type="button" onClick={handleRegenerate} disabled={regenerating} className={buttonSecondary}>
+                    <button
+                      type="button"
+                      onClick={handleRegenerate}
+                      disabled={regenerating}
+                      className={`${buttonSecondary} border-primary text-primary`}
+                    >
                       {regenerating ? "Regenerating..." : "Regenerate"}
                     </button>
                   </div>
@@ -1389,7 +1480,7 @@ export default function UploadPage() {
           )}
 
           <div className={card}>
-            <p className="mb-2 font-medium">Questions about this bill?</p>
+            <p className="mb-2 font-bold">Questions about this bill?</p>
             {chatMessages.length > 0 && stage.name === "done" && (
               <div className="mb-3 flex flex-col gap-2">
                 {chatMessages.map((m, i) => {
@@ -1398,7 +1489,7 @@ export default function UploadPage() {
                       <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
                         <p
                           className={`max-w-[85%] rounded-lg px-3 py-2 text-sm ${
-                            m.role === "user" ? "bg-ink text-paper" : "bg-line text-ink"
+                            m.role === "user" ? "bg-primary text-white" : "bg-slate-100 text-ink"
                           }`}
                         >
                           {m.content}
@@ -1439,9 +1530,17 @@ export default function UploadPage() {
                 })}
                 {chatSending && (
                   <div className="flex justify-start">
-                    <p className="max-w-[85%] rounded-lg bg-line px-3 py-2 text-sm text-ink-muted">
-                      {chatBusyRetrying ? "Busy -- retrying..." : "Thinking..."}
-                    </p>
+                    <div className="flex max-w-[85%] items-center gap-2 rounded-lg bg-slate-100 px-3 py-2 text-sm text-ink-muted">
+                      {chatBusyRetrying ? (
+                        "Busy -- retrying..."
+                      ) : (
+                        <span className="flex items-center gap-1" aria-label="Thinking">
+                          <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-ink-muted [animation-delay:-0.3s]" />
+                          <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-ink-muted [animation-delay:-0.15s]" />
+                          <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-ink-muted" />
+                        </span>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>

@@ -1,15 +1,21 @@
 import type { Metadata } from "next";
-import { Geist, Fraunces } from "next/font/google";
+import { Inter, Geist_Mono, Fraunces } from "next/font/google";
 import "./globals.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+// Body + headings -- sharp and modern, not the old warm-paper serif feel.
+const inter = Inter({
+  variable: "--font-inter",
   subsets: ["latin"],
 });
 
-// Headings only. Amounts use tabular-nums on the sans font instead of a
-// separate monospace family -- lighter to load, and column alignment only
-// needs tabular figures, not a full fixed-width typeface.
+// Amounts only -- tabular figures in a true monospace read as more
+// precise/trustworthy for money than proportional tabular-nums.
+const geistMono = Geist_Mono({
+  variable: "--font-geist-mono",
+  subsets: ["latin"],
+});
+
+// The BillShield wordmark only -- every other heading uses Inter now.
 const fraunces = Fraunces({
   variable: "--font-fraunces",
   subsets: ["latin"],
@@ -17,13 +23,13 @@ const fraunces = Fraunces({
 });
 
 export const metadata: Metadata = {
-  title: "BillShield",
+  title: "BillShield — Check your bill before you pay",
   description: "Check your bill before you pay it.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="en" className={`${geistSans.variable} ${fraunces.variable} h-full antialiased`}>
+    <html lang="en" className={`${inter.variable} ${geistMono.variable} ${fraunces.variable} h-full antialiased`}>
       <body className="min-h-full flex flex-col font-sans bg-paper text-ink">{children}</body>
     </html>
   );

@@ -19,6 +19,55 @@ const VERDICT_LABELS: Record<string, string> = {
   unexplained: "Unexplained",
 };
 
+// green/amber/red pill, same roles as the verdict banner on the main flow.
+const VERDICT_BADGE_CLASSES: Record<string, string> = {
+  clean: "bg-emerald-soft text-emerald",
+  confirmed_error: "bg-brick-soft text-brick",
+  cannot_verify: "bg-amber-soft text-amber",
+  unexplained: "bg-amber-soft text-amber",
+};
+
+function VerdictBadge({ outcome }: { outcome: string | null }) {
+  if (!outcome) return <span className="text-xs text-ink-muted">--</span>;
+  return (
+    <span
+      className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
+        VERDICT_BADGE_CLASSES[outcome] ?? "bg-line text-ink-muted"
+      }`}
+    >
+      {VERDICT_LABELS[outcome] ?? outcome}
+    </span>
+  );
+}
+
+// Provider "logo" stand-in: colored initials in a circle -- deterministic
+// color per provider name so the same provider always gets the same color.
+const INITIAL_CIRCLE_COLORS = [
+  "bg-primary-soft text-primary",
+  "bg-emerald-soft text-emerald",
+  "bg-amber-soft text-amber",
+  "bg-brick-soft text-brick",
+];
+function initialsFor(name: string): string {
+  const words = name.trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return "?";
+  return (words[0][0] + (words[1]?.[0] ?? "")).toUpperCase();
+}
+function colorIndexFor(name: string): number {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) % INITIAL_CIRCLE_COLORS.length;
+  return hash;
+}
+function ProviderAvatar({ provider }: { provider: string }) {
+  return (
+    <span
+      className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-bold ${INITIAL_CIRCLE_COLORS[colorIndexFor(provider)]}`}
+    >
+      {initialsFor(provider)}
+    </span>
+  );
+}
+
 // Per-user data behind cookie-based auth -- can't be statically
 // prerendered, so the cookie/DB access lives in this inner component,
 // wrapped in Suspense by the page shell below (Cache Components requires
@@ -47,18 +96,17 @@ async function BillsList() {
   return (
     <div className="flex flex-col gap-6">
       {groups.map((g) => (
-        <section key={g.provider} className="rounded-xl border border-line bg-card p-5 shadow-sm">
-          <h2 className="mb-3 font-medium">
+        <section key={g.provider} className="animate-fade-up rounded-lg border border-line bg-card p-5 shadow-card">
+          <h2 className="mb-3 flex items-center gap-2 font-bold">
+            <ProviderAvatar provider={g.provider} />
             {g.provider} <span className="font-normal text-ink-muted">({g.bills.length} bill{g.bills.length === 1 ? "" : "s"})</span>
           </h2>
           <div className="flex flex-col divide-y divide-line">
-            {g.bills.map((b) => (
-              <div key={b.id} className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 py-2 text-sm">
+            {g.bills.map((b, i) => (
+              <div key={b.id} className={`flex flex-wrap items-center justify-between gap-x-4 gap-y-1 px-2 py-2 text-sm ${i % 2 === 1 ? "bg-slate-50" : ""}`}>
                 <span className="text-ink-muted">{b.billDate}</span>
-                <span className="tabular-nums font-medium">Rs {money(b.total)}</span>
-                <span className="text-xs text-ink-muted">
-                  {b.verdictOutcome ? (VERDICT_LABELS[b.verdictOutcome] ?? b.verdictOutcome) : "--"}
-                </span>
+                <span className="font-mono tabular-nums font-medium">Rs {money(b.total)}</span>
+                <VerdictBadge outcome={b.verdictOutcome} />
                 {b.changeVsPrevious !== null && (
                   <span className={`text-xs ${b.changeVsPrevious > 0 ? "text-brick" : "text-emerald"}`}>
                     {b.changeVsPrevious > 0 ? "+" : ""}
@@ -82,9 +130,9 @@ async function BillsList() {
 
 export default function BillsPage() {
   return (
-    <main className="mx-auto w-full max-w-[900px] px-4 py-8 sm:px-6 sm:py-12">
+    <main className="mx-auto w-full max-w-[960px] px-4 py-8 sm:px-6 sm:py-12">
       <div className="mb-6 flex items-center justify-between">
-        <h1 className="font-serif text-2xl">My bills</h1>
+        <h1 className="text-2xl font-bold">My bills</h1>
         <Link href="/" className="text-sm text-ink-muted transition-colors hover:text-ink">
           ← Back
         </Link>
