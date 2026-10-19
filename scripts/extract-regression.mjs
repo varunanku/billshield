@@ -6,14 +6,16 @@
 // surface.
 //
 // Usage:
-//   node --env-file=.env.local scripts/extract-regression.mjs <imagePath> <expectedJsonPath>
+//   node --env-file=.env.local scripts/extract-regression.mjs <imagePath> <expectedJsonPath> [runs]
 //
-// Both arguments point OUTSIDE this repo on purpose -- a real bill photo
-// and its expected-lines fixture are not something to commit. expectedJsonPath
-// is a JSON array of { label, amount, role? }; label is informational only
-// (logged, not asserted -- transcription wording can drift trivially even
-// at temperature 0), amount is matched within 0.01, role is checked only if
-// given.
+// Both path arguments point OUTSIDE this repo on purpose -- a real bill
+// photo and its expected-lines fixture are not something to commit.
+// expectedJsonPath is a JSON array of { label, amount, role? }; label is
+// informational only (logged, not asserted -- transcription wording can
+// drift trivially even at temperature 0), amount is matched within 0.01,
+// role is checked only if given. [runs] defaults to 3, so a routine check
+// stays comfortably inside the account's rate limit; pass a higher number
+// (e.g. 5) when specifically hunting for an intermittent issue.
 //
 // ponytail: image files only, no PDF-to-image step here -- add
 // lib/pdf-to-images.ts if you need to regression-test a PDF bill.
@@ -22,12 +24,16 @@ import fs from "node:fs";
 import path from "node:path";
 import { extractBillFromImages } from "../lib/groq.ts";
 
-const RUNS = 3;
 const EPSILON = 0.01;
 
-const [, , imagePath, expectedPath] = process.argv;
+const [, , imagePath, expectedPath, runsArg] = process.argv;
 if (!imagePath || !expectedPath) {
-  console.error("Usage: node scripts/extract-regression.mjs <imagePath> <expectedJsonPath>");
+  console.error("Usage: node scripts/extract-regression.mjs <imagePath> <expectedJsonPath> [runs]");
+  process.exit(1);
+}
+const RUNS = runsArg ? Number(runsArg) : 3;
+if (!Number.isInteger(RUNS) || RUNS < 1) {
+  console.error(`[runs] must be a positive integer, got "${runsArg}"`);
   process.exit(1);
 }
 

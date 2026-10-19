@@ -47,13 +47,26 @@ figure next to a label. If you are not sure an amount is genuinely its own
 printed line (as opposed to something you would need to add, subtract, or
 infer to produce), omit that line entirely rather than guess.
 
-"role" must be exactly one of: "charge", "tax", "discount", "payment", "balance", "subtotal", "info".
+Some bills print a row's label (sometimes with a letter code like "(G)" or
+"(H)") but leave its amount cell blank, show only a dash/hyphen ("-"), or
+show "0.00" or "0". A blank, dash, or zero amount means nothing is charged
+on that line -- it is NOT something to estimate, infer, or fill in. A
+printed label by itself is never enough to justify a line item: there must
+also be a legible, non-zero number printed directly in that row's amount
+position. If a row's amount cell is blank, a dash, or zero, omit that row
+entirely -- do not output a line item for it, even if a neighboring row with
+a similar label does have a printed amount.
+
+"role" must be exactly one of: "charge", "tax", "discount", "payment", "balance", "subtotal", "info", "opening".
 - "charge": a fee or service charge that is part of what's owed.
 - "tax": a GST/tax line.
 - "discount": an amount subtracted or credited, reducing what's owed (not a tax).
 - "payment": an amount actually paid or received (e.g. "Paid Amount", "Amount Received").
-- "balance": an outstanding, due, or credit balance (e.g. "Outstanding Amount", "Balance Due").
-- "subtotal": a running or sub total line (not the final grand total -- that's the separate "total" field above).
+- "balance": an outstanding, due, or credit balance (e.g. "Outstanding Amount", "Balance Due"). A
+  row labelled "Total", "Grand Total", "Total Amount", "Final Total", "Amount
+  Payable", or "Amount Due" is role "balance", NEVER "charge" -- it restates
+  a total, it is not itself a new charge.
+- "subtotal": a running or sub total line (not the final grand total -- that's the separate "total" field above). If the exact same subtotal amount is printed twice under two different labels (e.g. "Subtotal" and, right below it, "Amount Before Tax", both showing the same figure), extract it only once, as a single line item.
 - "info": a non-monetary printed number that is not itself an amount owed or
   paid -- units consumed, kW/kVA, meter readings, a percentage rate, a
   tariff slab's unit count, or any other quantity that happens to have a
@@ -63,7 +76,33 @@ infer to produce), omit that line entirely rather than guess.
   "info" (even though it has its own printed amount) and instead extract
   the table's own printed section total (e.g. "Total Energy Charge:
   7863.50") as a single "charge" line -- don't extract both the slabs and
-  their total, since summing both would double count.
+  their total, since summing both would double count. A tariff slab row is
+  never itself a "charge" line, under any label. For a statement with a
+  summary block (previous balance, payments, fees, closing balance) plus a
+  separate list of individual transactions, extract only the summary block
+  as charge/tax/payment/opening/balance lines; give each individual
+  transaction row the role "info" instead -- it's already reflected in the
+  summary's totals, so extracting it again as a charge would double count.
+- "opening": a statement's previous/opening balance carried forward from
+  before this billing period (e.g. "Previous Balance").
+
+An amount printed as part of one row belongs only to that row's own label.
+Never take an amount from one row (including a tariff slab row) and assign
+it to a different, separately labelled row elsewhere on the bill, even if
+that other row's own cell is blank -- see the blank-cell rule above.
+
+If an item row prints several amount columns -- for example a pre-tax
+amount, a separate tax amount, and a tax-inclusive total, all for the same
+item -- use the pre-tax (taxable) amount as that item's own "charge" amount,
+not the tax-inclusive total; the tax itself gets its own separate "tax" line
+as usual.
+
+Arrears, late payment charges (LPSC), or similar fees that are printed
+between a subtotal and the final amount payable are real charge lines that
+come after that subtotal -- extract them with their own printed label and
+amount, same as any other charge. Never relabel an amount to make it fit a
+different row's label, and never invent a label for an amount, or an amount
+for a label, that isn't printed together as a pair.
 
 Rules:
 - Only report what is actually printed on the bill. Never guess, infer or compute a value that is not legible.

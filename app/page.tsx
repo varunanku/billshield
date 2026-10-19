@@ -65,25 +65,73 @@ const ROLE_LABELS: Record<LineRole, string> = {
   balance: "Balance",
   subtotal: "Subtotal",
   info: "Info",
+  opening: "Opening",
 };
 
 // Shared between the live review-screen preview and the saved "done"
 // summary -- same checks, same wording, two points in the flow.
-function ChecksSummary({ checks, total }: { checks: BillChecks; total: number }) {
+// onRemoveLine is only passed on the review screen (lines are no longer
+// editable once a bill is saved), so the one-click remove button only
+// shows up there -- the "done" screen still shows the same message, just
+// without an action attached to it.
+function ChecksSummary({
+  checks,
+  total,
+  onRemoveLine,
+}: {
+  checks: BillChecks;
+  total: number;
+  onRemoveLine?: (label: string, amount: number) => void;
+}) {
+  const showGenericArithmetic = !checks.arithmeticCoveredByPayment && !checks.statement;
+
   return (
     <div style={{ marginTop: "0.75rem" }}>
-      <p>
-        Sum of charge + tax − discount lines: <strong>{checks.billedSum.toFixed(2)}</strong>
-        {" vs printed total "}
-        <strong>{total.toFixed(2)}</strong>
-      </p>
-      {checks.arithmeticIssue ? (
-        <p style={{ color: "#856404" }}>
-          These lines don&apos;t add up to the printed total, so a line may be missing or misread. Compare with your
-          paper bill.
+      {checks.reclassifiedAsBalance.map((r, i) => (
+        <p key={i} style={{ color: "#856404" }}>
+          Note: treated &quot;{r.label}&quot; as the printed total, not a charge, since it matched the bill&apos;s own
+          total ({r.amount.toFixed(2)}).
         </p>
-      ) : (
-        <p style={{ color: "#155724" }}>✓ These lines add up to the printed total.</p>
+      ))}
+
+      {checks.taxIncludedNote && <p style={{ color: "#856404" }}>Note: {checks.taxIncludedNote}</p>}
+
+      {showGenericArithmetic && (
+        <>
+          <p>
+            Sum of charge + tax − discount lines: <strong>{checks.billedSum.toFixed(2)}</strong>
+            {" vs printed total "}
+            <strong>{total.toFixed(2)}</strong>
+          </p>
+          {checks.arithmeticIssue ? (
+            <p style={{ color: "#856404" }}>
+              These lines don&apos;t add up to the printed total, so a line may be missing or misread. Compare with
+              your paper bill.
+            </p>
+          ) : (
+            <p style={{ color: "#155724" }}>✓ These lines add up to the printed total.</p>
+          )}
+        </>
+      )}
+
+      {checks.statement && (
+        <>
+          <p>
+            Opening balance + charges + tax − discounts − payments: <strong>{checks.statement.expectedClosing.toFixed(2)}</strong>
+            {" vs printed total "}
+            <strong>{total.toFixed(2)}</strong>
+          </p>
+          {checks.statement.issue ? (
+            <p style={{ color: "#856404" }}>
+              These don&apos;t add up to the printed total, so a line may be missing or misread. Compare with your
+              paper bill.
+            </p>
+          ) : Math.abs(checks.statement.gap) > EPSILON ? (
+            <p style={{ color: "#155724" }}>✓ Matches within rounding.</p>
+          ) : (
+            <p style={{ color: "#155724" }}>✓ These add up to the printed total.</p>
+          )}
+        </>
       )}
 
       {checks.checkpoints.length > 0 && (
@@ -98,6 +146,20 @@ function ChecksSummary({ checks, total }: { checks: BillChecks; total: number })
                   {offBy
                     ? ` -- these don't match (gap of ${c.gap.toFixed(2)}), so a line in this section may be missing or misread.`
                     : " -- matches"}
+                  {offBy && c.suggestion && (
+                    <div style={{ marginTop: 2 }}>
+                      Removing &quot;{c.suggestion.label}&quot; would make this section add up.
+                      {onRemoveLine && (
+                        <button
+                          type="button"
+                          onClick={() => onRemoveLine(c.suggestion!.label, c.suggestion!.amount)}
+                          style={{ marginLeft: 8 }}
+                        >
+                          Remove &quot;{c.suggestion.label}&quot;
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </li>
               );
             })}
@@ -262,6 +324,18 @@ export default function UploadPage() {
     setLines((prev) => prev.map((l, i) => (i === index ? { ...l, ...patch } : l)));
   }
 
+  // Removes the one line a checkpoint suggestion pointed at. Matched by
+  // label + amount rather than index, since the suggestion comes from
+  // computeBillChecks's own re-derivation of the line list, not from an
+  // index into `lines` directly.
+  function removeLineByLabelAmount(label: string, amount: number) {
+    setLines((prev) => {
+      const index = prev.findIndex((l) => l.label === label && Math.abs(Number(l.amount) - amount) <= EPSILON);
+      if (index === -1) return prev;
+      return prev.filter((_, i) => i !== index);
+    });
+  }
+
   async function handleSignOut() {
     await supabase.auth.signOut();
     router.push("/login");
@@ -353,7 +427,7 @@ export default function UploadPage() {
             </tbody>
           </table>
 
-          <ChecksSummary checks={livePreview} total={parsedTotal} />
+          <ChecksSummary checks={livePreview} total={parsedTotal} onRemoveLine={removeLineByLabelAmount} />
 
           <button onClick={handleConfirm} disabled={!canConfirm} style={{ marginTop: "1rem" }}>
             This matches my paper bill
