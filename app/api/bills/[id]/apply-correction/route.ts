@@ -114,14 +114,18 @@ export async function POST(request: Request, routeContext: { params: Promise<{ i
       promise,
     });
 
+    // The verdict snapshot ("My bills") is stale the moment any correction
+    // lands -- refreshed alongside whichever field actually changed below.
+    const verdictSnapshot = { verdict_outcome: verdict.outcome, verdict_gap: "facts" in verdict ? verdict.facts.gap : null };
+
     // Persist exactly what changed -- never the whole bill, so an
     // unrelated field can't drift from what's actually stored.
     if (correction.field === "provider") {
-      await supabase.from("bills").update({ provider_name: maskPII(after.provider) }).eq("id", billId);
+      await supabase.from("bills").update({ provider_name: maskPII(after.provider), ...verdictSnapshot }).eq("id", billId);
     } else if (correction.field === "bill_date") {
-      await supabase.from("bills").update({ bill_date: after.billDate }).eq("id", billId);
+      await supabase.from("bills").update({ bill_date: after.billDate, ...verdictSnapshot }).eq("id", billId);
     } else if (correction.field === "printed_total") {
-      await supabase.from("bills").update({ total_amount: after.total }).eq("id", billId);
+      await supabase.from("bills").update({ total_amount: after.total, ...verdictSnapshot }).eq("id", billId);
     } else {
       const target = lineRows[correction.line_index!];
       const updatedLine = after.lines[correction.line_index!];
@@ -136,6 +140,7 @@ export async function POST(request: Request, routeContext: { params: Promise<{ i
           role: updatedLine.role,
         })
         .eq("id", target.id);
+      await supabase.from("bills").update(verdictSnapshot).eq("id", billId);
     }
 
     const persistedLines: PersistedLine[] = after.lines.map((l) => ({

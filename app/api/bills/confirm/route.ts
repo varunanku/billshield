@@ -2,7 +2,16 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { maskPII } from "@/lib/mask";
 import { isValidOwnedPath } from "@/lib/storage-paths";
-import { computeBillChecks, toPersistedLines, LINE_ROLES, type BillLine, type BillChecks, type PersistedLine } from "@/lib/bill-checks";
+import {
+  computeBillChecks,
+  toPersistedLines,
+  LINE_ROLES,
+  BILL_CATEGORIES,
+  type BillLine,
+  type BillCategory,
+  type BillChecks,
+  type PersistedLine,
+} from "@/lib/bill-checks";
 import { decideVerdict, type Verdict } from "@/lib/verdict";
 
 export const maxDuration = 30;
@@ -15,6 +24,11 @@ type ConfirmPayload = {
   provider_legal_name: string | null;
   bill_date: string;
   total: number;
+  category: BillCategory | null;
+  billing_period_start: string | null;
+  billing_period_end: string | null;
+  units_consumed: number | null;
+  units_consumed_unit: string | null;
   line_items: BillLine[];
   promise: PromiseInput;
 };
@@ -68,7 +82,20 @@ export async function POST(request: Request) {
   if (!validated.ok) {
     return json({ success: false, reason: "bad_request", message: validated.message }, 400);
   }
-  const { path, provider, provider_legal_name, bill_date, total, line_items, promise } = validated.data;
+  const {
+    path,
+    provider,
+    provider_legal_name,
+    bill_date,
+    total,
+    category,
+    billing_period_start,
+    billing_period_end,
+    units_consumed,
+    units_consumed_unit,
+    line_items,
+    promise,
+  } = validated.data;
 
   // bills.file_path is about to be set to this path -- it must be this
   // user's own upload, not one they typed in pointing at someone else's
@@ -99,6 +126,11 @@ export async function POST(request: Request) {
       bill_date,
       total_amount: total,
       file_path: path,
+      category,
+      billing_period_start,
+      billing_period_end,
+      verdict_outcome: verdict.outcome,
+      verdict_gap: "facts" in verdict ? verdict.facts.gap : null,
     })
     .select()
     .single();
@@ -125,6 +157,18 @@ export async function POST(request: Request) {
       { success: false, reason: "server_error", message: "Couldn't save this bill's line items. Please try again." },
       500
     );
+  }
+
+  if (units_consumed !== null) {
+    const { error: metricError } = await supabase.from("bill_metrics").insert({
+      bill_id: bill.id,
+      metric: "units_consumed",
+      value: units_consumed,
+      unit: units_consumed_unit,
+    });
+    // Same as the promise below -- a metric is supplementary, never worth
+    // failing the whole confirm over.
+    if (metricError) console.error("Bill metric insert failed:", metricError);
   }
 
   if (promise) {
@@ -179,6 +223,13 @@ function validatePayload(value: unknown): { ok: true; data: ConfirmPayload } | {
   const total = typeof v.total === "number" && Number.isFinite(v.total) ? v.total : null;
   if (total === null) return { ok: false, message: "Please enter the bill total." };
 
+  const category = BILL_CATEGORIES.includes(v.category as BillCategory) ? (v.category as BillCategory) : null;
+  const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+  const billing_period_start = typeof v.billing_period_start === "string" && DATE_RE.test(v.billing_period_start) ? v.billing_period_start : null;
+  const billing_period_end = typeof v.billing_period_end === "string" && DATE_RE.test(v.billing_period_end) ? v.billing_period_end : null;
+  const units_consumed = typeof v.units_consumed === "number" && Number.isFinite(v.units_consumed) ? v.units_consumed : null;
+  const units_consumed_unit = typeof v.units_consumed_unit === "string" ? v.units_consumed_unit : null;
+
   if (!Array.isArray(v.line_items) || v.line_items.length === 0) {
     return { ok: false, message: "At least one line item is required." };
   }
@@ -209,5 +260,21 @@ function validatePayload(value: unknown): { ok: true; data: ConfirmPayload } | {
     }
   }
 
-  return { ok: true, data: { path, provider, provider_legal_name, bill_date, total, line_items, promise } };
+  return {
+    ok: true,
+    data: {
+      path,
+      provider,
+      provider_legal_name,
+      bill_date,
+      total,
+      category,
+      billing_period_start,
+      billing_period_end,
+      units_consumed,
+      units_consumed_unit,
+      line_items,
+      promise,
+    },
+  };
 }

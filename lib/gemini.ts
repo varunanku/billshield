@@ -3,7 +3,7 @@
 // reaches the browser; this module is only imported from Route Handlers.
 import "server-only";
 
-import { LINE_ROLES } from "./bill-checks.ts";
+import { BILL_CATEGORIES, LINE_ROLES } from "./bill-checks.ts";
 import {
   EXTRACTION_PROMPT,
   type ChatResult,
@@ -35,6 +35,11 @@ const RESPONSE_SCHEMA = {
     provider_legal_name: { type: "STRING", nullable: true },
     bill_date: { type: "STRING", nullable: true },
     total: { type: "NUMBER", nullable: true },
+    category: { type: "STRING", enum: BILL_CATEGORIES, nullable: true },
+    billing_period_start: { type: "STRING", nullable: true },
+    billing_period_end: { type: "STRING", nullable: true },
+    units_consumed: { type: "NUMBER", nullable: true },
+    units_consumed_unit: { type: "STRING", nullable: true },
     line_items: {
       type: "ARRAY",
       items: {
@@ -48,7 +53,18 @@ const RESPONSE_SCHEMA = {
       },
     },
   },
-  required: ["provider", "provider_legal_name", "bill_date", "total", "line_items"],
+  required: [
+    "provider",
+    "provider_legal_name",
+    "bill_date",
+    "total",
+    "category",
+    "billing_period_start",
+    "billing_period_end",
+    "units_consumed",
+    "units_consumed_unit",
+    "line_items",
+  ],
 };
 
 export async function extractBillFromImages(images: ImageInput[]): Promise<GroqExtractResult> {

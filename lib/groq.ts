@@ -4,7 +4,7 @@
 // GROQ_API_KEY never reaches the browser; this module is only imported
 // from Route Handlers.
 
-import { LINE_ROLES, type LineRole } from "./bill-checks.ts";
+import { BILL_CATEGORIES, LINE_ROLES, type BillCategory, type LineRole } from "./bill-checks.ts";
 
 const GROQ_MODEL = "qwen/qwen3.8-27b";
 const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
@@ -14,6 +14,11 @@ export type ExtractedBill = {
   provider_legal_name: string | null;
   bill_date: string | null;
   total: number | null;
+  category: BillCategory | null;
+  billing_period_start: string | null;
+  billing_period_end: string | null;
+  units_consumed: number | null;
+  units_consumed_unit: string | null;
   line_items: { label: string; amount: number; role: LineRole }[];
 };
 
@@ -31,6 +36,11 @@ export const EXTRACTION_PROMPT = `You are reading a bill or receipt image. Retur
   "provider_legal_name": string or null,
   "bill_date": string (YYYY-MM-DD) or null,
   "total": number or null,
+  "category": string or null,
+  "billing_period_start": string (YYYY-MM-DD) or null,
+  "billing_period_end": string (YYYY-MM-DD) or null,
+  "units_consumed": number or null,
+  "units_consumed_unit": string or null,
   "line_items": [ { "label": string, "amount": number, "role": string } ]
 }
 
@@ -122,6 +132,22 @@ Rules:
   print "Digital Science UK Limited" as the billing entity. If no such
   separate legal name is printed, or it's the same as the brand, use null.
   Never guess or infer one.
+- "category": exactly one of ${JSON.stringify(BILL_CATEGORIES)}, based on
+  what kind of bill this obviously is (an electricity board bill ->
+  "electricity", a broadband/Wi-Fi bill -> "internet", a phone/SIM recharge
+  -> "mobile", a bank/card statement -> "credit_card", a supermarket/grocery
+  receipt -> "groceries", a SaaS/subscription invoice -> "software", a
+  single appliance/electronics purchase receipt -> "appliance"). Use
+  "other" if genuinely unclear -- never guess a specific category you're
+  not confident about.
+- "billing_period_start"/"billing_period_end": only if the bill explicitly
+  prints a billing/service period (e.g. "Billing period: 01 Jun - 30 Jun
+  2026"). null if no period is printed -- never infer one from the bill date.
+- "units_consumed"/"units_consumed_unit": only the single headline
+  consumption figure if the bill prints one (e.g. "248 units" for
+  electricity, "12 GB" for data, "320 mins" for calls) -- the total for the
+  whole bill, not a single tariff slab's row. null if nothing like this is
+  printed.
 - "total" is the single grand total amount printed on the bill.
 - "line_items" are the individual lines (label + amount + role) as printed, in the order they appear.
 - Your only job for each line is to transcribe its printed label and amount and classify its role. Do not add up, multiply, net out, or otherwise calculate anything yourself.
@@ -280,6 +306,11 @@ export function coerceExtractedBill(value: unknown): ExtractedBill | null {
     provider_legal_name: typeof v.provider_legal_name === "string" ? v.provider_legal_name : null,
     bill_date: typeof v.bill_date === "string" ? v.bill_date : null,
     total: typeof v.total === "number" ? v.total : null,
+    category: BILL_CATEGORIES.includes(v.category as BillCategory) ? (v.category as BillCategory) : null,
+    billing_period_start: typeof v.billing_period_start === "string" ? v.billing_period_start : null,
+    billing_period_end: typeof v.billing_period_end === "string" ? v.billing_period_end : null,
+    units_consumed: typeof v.units_consumed === "number" ? v.units_consumed : null,
+    units_consumed_unit: typeof v.units_consumed_unit === "string" ? v.units_consumed_unit : null,
     line_items,
   };
 }

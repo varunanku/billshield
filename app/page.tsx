@@ -13,6 +13,7 @@ import {
   type LineRole,
   type BillChecks,
   type Checkpoint,
+  type BillCategory,
 } from "@/lib/bill-checks";
 import { shouldDraftEmail, type Verdict } from "@/lib/verdict";
 import { MAX_FOLLOWUP_MESSAGES, type FollowupBillContext, type FollowupReply, type Correction } from "@/lib/followup";
@@ -24,6 +25,11 @@ type ExtractedBill = {
   provider_legal_name: string | null;
   bill_date: string | null;
   total: number | null;
+  category: BillCategory | null;
+  billing_period_start: string | null;
+  billing_period_end: string | null;
+  units_consumed: number | null;
+  units_consumed_unit: string | null;
   line_items: BillLine[];
 };
 
@@ -301,6 +307,16 @@ export default function UploadPage() {
 
   const [provider, setProvider] = useState("");
   const [providerLegalName, setProviderLegalName] = useState<string | null>(null);
+  // Carried through from extraction to confirm as-is -- not user-editable
+  // on the review screen (Phase 3 only asks that these be captured/stored
+  // when printed, not reviewed field-by-field like provider/date/total).
+  const [extraFields, setExtraFields] = useState<{
+    category: BillCategory | null;
+    billing_period_start: string | null;
+    billing_period_end: string | null;
+    units_consumed: number | null;
+    units_consumed_unit: string | null;
+  }>({ category: null, billing_period_start: null, billing_period_end: null, units_consumed: null, units_consumed_unit: null });
   const [billDate, setBillDate] = useState("");
   const [total, setTotal] = useState("");
   const [lines, setLines] = useState<EditableLine[]>([]);
@@ -431,6 +447,13 @@ export default function UploadPage() {
 
       setProvider(data.extraction.provider ?? "");
       setProviderLegalName(data.extraction.provider_legal_name ?? null);
+      setExtraFields({
+        category: data.extraction.category ?? null,
+        billing_period_start: data.extraction.billing_period_start ?? null,
+        billing_period_end: data.extraction.billing_period_end ?? null,
+        units_consumed: data.extraction.units_consumed ?? null,
+        units_consumed_unit: data.extraction.units_consumed_unit ?? null,
+      });
       setBillDate(data.extraction.bill_date ?? "");
       setTotal(data.extraction.total !== null ? String(data.extraction.total) : "");
       setLines(
@@ -502,6 +525,7 @@ export default function UploadPage() {
           path: uploadedPath,
           provider,
           provider_legal_name: providerLegalName,
+          ...extraFields,
           bill_date: billDate,
           total: parsedTotal,
           line_items: parsedLines,
@@ -552,6 +576,13 @@ export default function UploadPage() {
     setUploadedPath(null);
     setProvider("");
     setProviderLegalName(null);
+    setExtraFields({
+      category: null,
+      billing_period_start: null,
+      billing_period_end: null,
+      units_consumed: null,
+      units_consumed_unit: null,
+    });
     setBillDate("");
     setTotal("");
     setLines([]);
@@ -811,12 +842,17 @@ export default function UploadPage() {
         if (data.reason === "rate_limited" && res.status === 429) setChatLimitReached(true);
         return;
       }
-      setChatMessages((prev) => [
-        ...prev,
+      // get_history is always resolved server-side before this response is
+      // sent -- the client only ever sees "answer" or "correction" here,
+      // but the type is still the full union, so this is handled for
+      // completeness rather than left to fall through silently.
+      const entry: ChatEntry =
         data.reply.type === "answer"
           ? { kind: "text", role: "assistant", content: data.reply.text }
-          : { kind: "correction", correction: data.reply.correction, status: "pending" },
-      ]);
+          : data.reply.type === "correction"
+          ? { kind: "correction", correction: data.reply.correction, status: "pending" }
+          : { kind: "text", role: "assistant", content: "Something unexpected happened. Please try again." };
+      setChatMessages((prev) => [...prev, entry]);
       if (data.messagesUsed >= MAX_FOLLOWUP_MESSAGES) setChatLimitReached(true);
     } catch {
       setChatError("Couldn't reach the server. Please try again.");
@@ -899,6 +935,9 @@ export default function UploadPage() {
           <h1 className="font-serif text-2xl">BillShield</h1>
         </div>
         <div className="flex items-center gap-3">
+          <a href="/bills" className="text-sm text-ink-muted transition-colors hover:text-ink">
+            My bills
+          </a>
           {userEmail && <span className="text-sm text-ink-muted">{userEmail}</span>}
           <button onClick={handleSignOut} className="text-sm text-ink-muted transition-colors hover:text-ink">
             Sign out

@@ -4,11 +4,13 @@ import { LINE_ROLES, type LineRole } from "@/lib/bill-checks";
 import {
   buildFollowupSystemPrompt,
   parseFollowupReply,
+  buildHistoryResultTurn,
   MAX_FOLLOWUP_MESSAGES,
   type FollowupBillContext,
   type ChatTurn,
   type FollowupReply,
 } from "@/lib/followup";
+import { computeHistoryQuery } from "@/lib/history";
 import { answerFollowupQuestion as askGroq, type ChatResult } from "@/lib/groq";
 import { answerFollowupQuestion as askGemini } from "@/lib/gemini";
 import { USE_GROQ } from "@/lib/provider";
@@ -136,7 +138,49 @@ export async function POST(request: Request, routeContext: { params: Promise<{ i
       );
     }
 
-    const reply = parseFollowupReply(result.text);
+    let reply = parseFollowupReply(result.text);
+
+    // A get_history request never reaches the client -- it's resolved
+    // right here, in one more round-trip, before this turn is considered
+    // answered. The query is scoped to `bills`/`bill_metrics` through the
+    // same RLS-enforcing client as everything else in this route, so it
+    // can only ever see this signed-in user's own bills (hard rule 4).
+    if (reply.type === "get_history") {
+      const { provider, metric, months } = reply.request;
+      const { data: matchingBills } = await supabase
+        .from("bills")
+        .select("id, bill_date, total_amount")
+        .ilike("provider_name", `%${provider}%`)
+        .order("bill_date", { ascending: false })
+        .limit(months);
+
+      let values: { billDate: string; value: number }[] = [];
+      if (metric === "total") {
+        values = (matchingBills ?? []).map((b) => ({ billDate: b.bill_date, value: Number(b.total_amount) }));
+      } else if (matchingBills && matchingBills.length > 0) {
+        const { data: metricRows } = await supabase
+          .from("bill_metrics")
+          .select("bill_id, value")
+          .eq("metric", "units_consumed")
+          .in(
+            "bill_id",
+            matchingBills.map((b) => b.id)
+          );
+        const byBillId = new Map((metricRows ?? []).map((m) => [m.bill_id, Number(m.value)]));
+        values = matchingBills.filter((b) => byBillId.has(b.id)).map((b) => ({ billDate: b.bill_date, value: byBillId.get(b.id)! }));
+      }
+
+      const historyResult = computeHistoryQuery(values);
+      const followupTurn = buildHistoryResultTurn(reply.request, historyResult);
+      const secondResult = await answerFollowupQuestion(systemPrompt, [...history, { role: "assistant", content: result.text }, followupTurn]);
+      reply = secondResult.ok ? parseFollowupReply(secondResult.text) : { type: "answer", text: "Couldn't look up that history just now. Please try again." };
+      // However the model phrased it, this turn is answering the user's
+      // ORIGINAL question -- a nested get_history/correction here would
+      // just be confusing, so anything but a plain answer falls back to
+      // its raw text rather than recursing further.
+      if (reply.type !== "answer") reply = { type: "answer", text: secondResult.ok ? secondResult.text : "Couldn't look up that history just now." };
+    }
+
     // A correction proposal is stored as a readable summary, not the raw
     // JSON -- it's what later history-building re-feeds the model as this
     // turn's content, and it's what a human would see if they ever read

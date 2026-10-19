@@ -2,10 +2,11 @@
 // Run with: node --env-file=.env.local scripts/rls-two-user-test.mjs
 //
 // Creates two throwaway users via the admin API, has user A write one bill
-// + line item + promise + message + one storage file, then proves user B
-// (and an anon client) cannot read, modify or link to any of it, and that
-// user A still can. Prints PASS/FAIL per check, then deletes everything it
-// created (storage files, data rows, both auth users) even if a check fails.
+// + line item + promise + message + bill_metrics row + one storage file,
+// then proves user B (and an anon client) cannot read, modify or link to
+// any of it -- including history data (Phase 3) -- and that user A still
+// can. Prints PASS/FAIL per check, then deletes everything it created
+// (storage files, data rows, both auth users) even if a check fails.
 //
 // Needs NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY and
 // SUPABASE_SERVICE_ROLE_KEY. Service role is used only for the auth admin
@@ -48,7 +49,7 @@ const emailA = `rls-test-a-${stamp}@example.com`;
 const emailB = `rls-test-b-${stamp}@example.com`;
 
 let userA, userB, clientA, clientB, anonClient;
-let billA, lineItemA, promiseA, messageA, billB;
+let billA, lineItemA, promiseA, messageA, billB, metricA;
 const filePathA = (name) => `${userA.id}/${name}`;
 const TEST_FILE_NAME = `rls-test-${stamp}.txt`;
 
@@ -121,6 +122,15 @@ async function setup() {
   messageA = messageRes.data;
   check("setup: user A can insert a message linking own line item", true);
 
+  const metricRes = await clientA
+    .from("bill_metrics")
+    .insert({ bill_id: billA.id, metric: "units_consumed", value: 248, unit: "kWh" })
+    .select()
+    .single();
+  if (metricRes.error) throw metricRes.error;
+  metricA = metricRes.data;
+  check("setup: user A can insert a bill_metrics row on own bill", true);
+
   const uploadRes = await clientA.storage.from("bills").upload(filePathA(TEST_FILE_NAME), "rls test file contents", {
     contentType: "text/plain",
     upsert: true,
@@ -145,6 +155,13 @@ async function dataChecks() {
   await userBCannotReadWriteOrDeleteAsRow("line_items", lineItemA);
   await userBCannotReadWriteOrDeleteAsRow("promises", promiseA);
   await userBCannotReadWriteOrDeleteAsRow("messages", messageA);
+  await userBCannotReadWriteOrDeleteAsRow("bill_metrics", metricA);
+
+  const insMetric = await clientB
+    .from("bill_metrics")
+    .insert({ bill_id: billA.id, metric: "units_consumed", value: 1, unit: "kWh" })
+    .select();
+  check("user B cannot insert a bill_metrics row into A's bill", denied(insMetric));
 
   // Belt-and-suspenders: confirm B's update attempt didn't actually change
   // A's bill, not just that it returned no rows.
@@ -224,6 +241,8 @@ async function dataChecks() {
   check("user A can still select own promise", !ownPromise.error && ownPromise.data?.id === promiseA.id);
   const ownMessage = await clientA.from("messages").select("*").eq("id", messageA.id).single();
   check("user A can still select own message", !ownMessage.error && ownMessage.data?.id === messageA.id);
+  const ownMetric = await clientA.from("bill_metrics").select("*").eq("id", metricA.id).single();
+  check("user A can still select own bill_metrics row", !ownMetric.error && ownMetric.data?.id === metricA.id);
 }
 
 async function storageChecks() {

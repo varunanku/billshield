@@ -16,6 +16,20 @@ export const LINE_ROLES: LineRole[] = [
   "opening",
 ];
 
+// Closed list (hard rule: never a free-text category) -- also what
+// category_rates.category must match for the GST reference lookup.
+export type BillCategory = "electricity" | "internet" | "mobile" | "credit_card" | "groceries" | "software" | "appliance" | "other";
+export const BILL_CATEGORIES: BillCategory[] = [
+  "electricity",
+  "internet",
+  "mobile",
+  "credit_card",
+  "groceries",
+  "software",
+  "appliance",
+  "other",
+];
+
 // unrecognized is set from the review screen's "I don't recognise this"
 // mark -- it never affects any sum/checkpoint/warning (those are about
 // whether the maths is right, which is unrelated to whether the user

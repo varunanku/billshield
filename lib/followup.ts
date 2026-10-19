@@ -52,7 +52,7 @@ Rules:
 - You NEVER compute or state a new total, verdict, or difference yourself -- a correction only ever proposes what
   a single field should read as, and code recomputes everything else after the user approves it.
 
-Return ONLY a single JSON object, no other text, in exactly one of these two shapes:
+Return ONLY a single JSON object, no other text, in exactly one of these three shapes:
 
 To answer normally:
 {"type": "answer", "text": string}
@@ -60,7 +60,13 @@ To answer normally:
 To propose a correction (only when the user's message points out something that's actually wrong, e.g. a misread
 label/amount/role, or the wrong provider/date/total -- never propose one just to acknowledge a question):
 {"type": "correction", "field": "provider" | "bill_date" | "printed_total" | "line", "line_index": number or null (required, and must be one of the indices above, when field is "line"), "new_label": string or null, "new_role": one of ${JSON.stringify(LINE_ROLES)} or null, "new_amount": number or null, "reason": string (one short sentence explaining why)}
-Only set the new_* fields relevant to what's changing; leave the rest null.`;
+Only set the new_* fields relevant to what's changing; leave the rest null.
+
+To ask the app to look up this user's OWN past bills before you answer (only when the question genuinely needs
+history, e.g. "how does this compare to last few months" or "what's my average usage" -- never for anything
+answerable from the single bill above):
+{"type": "get_history", "provider": string (which provider's bills to look up -- usually this bill's own provider unless the user names a different one), "metric": "total" | "units_consumed", "months": number (how many of that provider's most recent bills to consider, typically 3-12)}
+You will then be given the computed figures and asked to phrase the final answer from those alone -- you still never compute the comparison yourself.`;
 }
 
 export type Correction = {
@@ -72,7 +78,13 @@ export type Correction = {
   reason: string;
 };
 
-export type FollowupReply = { type: "answer"; text: string } | { type: "correction"; correction: Correction };
+export type HistoryMetric = "total" | "units_consumed";
+export type HistoryRequest = { provider: string; metric: HistoryMetric; months: number };
+
+export type FollowupReply =
+  | { type: "answer"; text: string }
+  | { type: "correction"; correction: Correction }
+  | { type: "get_history"; request: HistoryRequest };
 
 // Lenient by design: a model that fails to follow the JSON-shape
 // instruction still has its raw text shown as a plain answer, rather than
@@ -96,6 +108,11 @@ export function parseFollowupReply(raw: string): FollowupReply {
         };
       }
     }
+    if (parsed?.type === "get_history" && typeof parsed.provider === "string") {
+      const metric = parsed.metric === "units_consumed" ? "units_consumed" : "total";
+      const months = typeof parsed.months === "number" && parsed.months > 0 ? Math.min(Math.round(parsed.months), 24) : 6;
+      return { type: "get_history", request: { provider: parsed.provider, metric, months } };
+    }
     if (parsed?.type === "answer" && typeof parsed.text === "string") {
       return { type: "answer", text: parsed.text };
     }
@@ -103,6 +120,24 @@ export function parseFollowupReply(raw: string): FollowupReply {
     // Not JSON (or didn't match either shape) -- fall through below.
   }
   return { type: "answer", text: raw };
+}
+
+// The follow-up turn fed back to the model after the route has resolved a
+// get_history request in code -- the model phrases the answer from these
+// numbers alone, it never saw (and can't recompute) the underlying rows.
+export function buildHistoryResultTurn(
+  request: HistoryRequest,
+  result: { count: number; averageBeforeLatest: number | null; latestValue: number | null; latestDate: string | null }
+): ChatTurn {
+  const unit = request.metric === "units_consumed" ? "" : "Rs ";
+  const content =
+    result.count === 0
+      ? `No past bills found for "${request.provider}". Say so plainly -- don't estimate or guess a figure.`
+      : `Computed from the user's own last ${result.count} bill(s) for "${request.provider}" (metric: ${request.metric}): ` +
+        `most recent (${result.latestDate}) = ${unit}${result.latestValue}` +
+        (result.averageBeforeLatest !== null ? `, average of the bills before that = ${unit}${result.averageBeforeLatest.toFixed(2)}` : ", no earlier bills to average") +
+        `. Answer the user's original question using ONLY these numbers -- do not add, subtract, or estimate anything beyond what's given here. Respond in the same {"type": "answer", "text": string} JSON shape as before.`;
+  return { role: "user", content };
 }
 
 export type BillState = { provider: string; billDate: string; total: number; lines: BillLine[] };
