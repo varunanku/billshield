@@ -57,7 +57,11 @@ export type BillChecks = {
   arithmeticCoveredByPayment: boolean; // true: the payment check already explains the gap, don't also show the generic "don't add up" message
   payment: {
     amountPaid: number;
-    signedDifference: number; // billedSum - amountPaid; positive = dispute (billed more than paid), negative = overpaid
+    // billedSum PLUS any "outstanding/arrears/previous due"-labelled balance
+    // line -- on a payment receipt, that figure is what the payment amount
+    // is actually supposed to cover, not just the new charge alone.
+    coveredAmount: number;
+    signedDifference: number; // coveredAmount - amountPaid; positive = dispute (billed more than paid), negative = overpaid
     verdict: "dispute" | "overpaid" | "even";
   } | null; // null when there's no payment-role line, OR when a statement check (opening line) supersedes it
   checkpoints: Checkpoint[]; // one per subtotal-role line, in document order (a duplicate subtotal under a second label is not a separate checkpoint)
@@ -257,23 +261,35 @@ export function computeBillChecks(lineItems: BillLine[], total: number): BillChe
   let arithmeticIssue = Math.abs(arithmeticDifference) > EPSILON;
   let arithmeticCoveredByPayment = false;
 
+  // A receipt's "outstanding"/"arrears"/"previous due" balance line isn't a
+  // separate thing still owed -- it's typically what the payment amount
+  // also covers, alongside the new charge (the real Airtel receipt: paid
+  // 12165.08 = advance rental 12023.96 + outstanding 141.12 exactly). Only
+  // lines actually labelled this way count -- an ordinary "balance" line
+  // with no such label isn't assumed to be covered by anything.
+  const RECONCILING_BALANCE_LABEL = /outstanding|arrear|previous.?(due|balance)/i;
+  const reconcilingBalanceSum = effectiveLineItems
+    .filter((li) => li.role === "balance" && RECONCILING_BALANCE_LABEL.test(li.label))
+    .reduce((s, li) => s + li.amount, 0);
+
   const paymentLines = effectiveLineItems.filter((li) => li.role === "payment");
   let payment =
     paymentLines.length === 0
       ? null
       : (() => {
           const amountPaid = paymentLines.reduce((s, li) => s + li.amount, 0);
-          const signedDifference = billedSum - amountPaid;
+          const coveredAmount = billedSum + reconcilingBalanceSum;
+          const signedDifference = coveredAmount - amountPaid;
           const verdict: "dispute" | "overpaid" | "even" =
             signedDifference > EPSILON ? "dispute" : signedDifference < -EPSILON ? "overpaid" : "even";
-          return { amountPaid, signedDifference, verdict };
+          return { amountPaid, coveredAmount, signedDifference, verdict };
         })();
 
-  // The printed "total" on a payment receipt is sometimes really the paid
-  // figure, not a sum-of-charges total (the Airtel case) -- the generic
-  // arithmetic check would otherwise flag a confusing "doesn't add up" on
-  // top of the payment check that already explains the exact same gap.
-  if (payment && Math.abs(total - payment.amountPaid) <= EPSILON) {
+  // When the payment fully reconciles (including any outstanding/arrears
+  // line), that's the real explanation for this bill's printed total --
+  // the generic arithmetic check would otherwise separately flag a
+  // confusing "doesn't add up" using the narrower billedSum alone.
+  if (payment && payment.verdict === "even") {
     arithmeticIssue = false;
     arithmeticCoveredByPayment = true;
   }

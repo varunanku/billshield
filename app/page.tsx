@@ -45,12 +45,14 @@ type DraftEmailResponse =
 
 type EditableLine = { label: string; amount: string; role: LineRole; unrecognized?: boolean };
 
+// "confirming" is deliberately not its own stage: the button itself shows
+// a spinner (isConfirming, a plain boolean) while staying on "reviewing",
+// rather than switching to a separate blank screen.
 type Stage =
   | { name: "upload" }
   | { name: "uploading" }
   | { name: "extracting" }
   | { name: "reviewing"; notice: string | null }
-  | { name: "confirming" }
   | { name: "done"; bill: ConfirmedBill; checks: BillChecks; verdict: Verdict }
   | { name: "error"; message: string; notice?: string; retryAfterSeconds?: number };
 
@@ -85,6 +87,13 @@ const ROLE_LABELS: Record<LineRole, string> = {
 
 function money(n: number) {
   return n.toFixed(2);
+}
+
+// Only these two outcomes draft an email -- cannot_verify is an honest
+// "something's off but we don't know what" with no pinpointed cause to
+// write a confident OR an inquiry email about, so it gets neither.
+function outcomeDraftsEmail(outcome: Verdict["outcome"]): boolean {
+  return outcome === "confirmed_error" || outcome === "unexplained";
 }
 
 // Upload -> Review -> Verdict. A minimal 3-dot/line stepper, not shown on
@@ -206,7 +215,7 @@ function ChecksSummary({ checks, total }: { checks: BillChecks; total: number })
 
       {checks.payment && (
         <p>
-          Payment check: billed {money(checks.billedSum)} vs paid {money(checks.payment.amountPaid)} --{" "}
+          Payment check: billed {money(checks.payment.coveredAmount)} vs paid {money(checks.payment.amountPaid)} --{" "}
           {checks.payment.verdict === "overpaid"
             ? `overpaid by ${money(Math.abs(checks.payment.signedDifference))}`
             : checks.payment.verdict === "dispute"
@@ -220,10 +229,13 @@ function ChecksSummary({ checks, total }: { checks: BillChecks; total: number })
 
 const inputClasses =
   "min-h-11 w-full rounded-md border border-line bg-card px-3 py-2 text-ink outline-none transition-colors focus-visible:ring-2 focus-visible:ring-emerald focus-visible:border-emerald";
+// Every button gets a visible pressed state (darker + a slight scale down)
+// on :active, on top of the hover/focus treatment -- not just a hover
+// effect, which touch devices never see anyway.
 const buttonPrimary =
-  "min-h-11 rounded-md bg-emerald px-4 py-2 font-medium text-paper transition-colors hover:opacity-90 disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald focus-visible:ring-offset-2 focus-visible:ring-offset-paper";
+  "min-h-11 rounded-md bg-emerald px-4 py-2 font-medium text-paper transition-all duration-150 hover:opacity-90 active:scale-[0.97] active:brightness-90 disabled:opacity-40 disabled:active:scale-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald focus-visible:ring-offset-2 focus-visible:ring-offset-paper";
 const buttonSecondary =
-  "min-h-11 rounded-md border border-line px-4 py-2 font-medium transition-colors hover:bg-card disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald";
+  "min-h-11 rounded-md border border-line px-4 py-2 font-medium transition-all duration-150 hover:bg-card active:scale-[0.97] active:bg-line disabled:opacity-40 disabled:active:scale-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald";
 const card = "rounded-xl border border-line bg-card p-5 shadow-sm";
 
 export default function UploadPage() {
@@ -233,6 +245,7 @@ export default function UploadPage() {
   const [isDraggingOver, setIsDraggingOver] = useState(false);
   const [uploadedPath, setUploadedPath] = useState<string | null>(null);
   const [stage, setStage] = useState<Stage>({ name: "upload" });
+  const [isConfirming, setIsConfirming] = useState(false);
 
   const [provider, setProvider] = useState("");
   const [billDate, setBillDate] = useState("");
@@ -393,7 +406,7 @@ export default function UploadPage() {
 
   async function handleConfirm() {
     if (!uploadedPath || !canConfirm) return;
-    setStage({ name: "confirming" });
+    setIsConfirming(true);
 
     const promisedAmountValue = parseAmountInput(promiseAmount);
     const promise = promiseStatement.trim()
@@ -416,6 +429,7 @@ export default function UploadPage() {
       const data: ConfirmResponse = await res.json();
 
       if (!data.success) {
+        setIsConfirming(false);
         setStage({ name: "error", message: data.message });
         return;
       }
@@ -423,10 +437,25 @@ export default function UploadPage() {
       setEmailError(null);
       setEmailActionTaken(null);
       draftRequestedRef.current = false;
+      setIsConfirming(false);
       setStage({ name: "done", bill: data.bill, checks: data.checks, verdict: data.verdict });
     } catch {
+      setIsConfirming(false);
       setStage({ name: "error", message: "Couldn't reach the server. Check your connection and try again." });
     }
+  }
+
+  // Review -> Upload keeps the file selected; Verdict -> Review keeps every
+  // edit (lines/provider/date/total/promise are never cleared by confirm,
+  // only by startOver). Re-confirming after going back creates a second
+  // bill row rather than updating the first one -- confirm has always been
+  // an insert, and turning it into an update is a bigger change than "add a
+  // back button".
+  function backToUpload() {
+    setStage({ name: "upload" });
+  }
+  function backToReview() {
+    setStage({ name: "reviewing", notice: null });
   }
 
   function startOver() {
@@ -441,6 +470,7 @@ export default function UploadPage() {
     setEmailDraft(null);
     setEmailError(null);
     setEmailActionTaken(null);
+    setIsConfirming(false);
     draftRequestedRef.current = false;
     setStage({ name: "upload" });
   }
@@ -491,7 +521,10 @@ export default function UploadPage() {
   // startOver/handleConfirm reset it for the next bill.
   useEffect(() => {
     if (stage.name !== "done") return;
-    if (stage.verdict.outcome === "clean") return;
+    // Written as a literal comparison (not outcomeDraftsEmail) so
+    // TypeScript narrows stage.verdict to the two variants that carry
+    // .facts, which the fetch body below reads.
+    if (stage.verdict.outcome !== "confirmed_error" && stage.verdict.outcome !== "unexplained") return;
     if (emailDraft || draftRequestedRef.current) return;
     draftRequestedRef.current = true;
 
@@ -517,7 +550,7 @@ export default function UploadPage() {
   }, [stage]);
 
   const draftingEmail =
-    stage.name === "done" && stage.verdict.outcome !== "clean" && emailDraft === null && emailError === null;
+    stage.name === "done" && outcomeDraftsEmail(stage.verdict.outcome) && emailDraft === null && emailError === null;
 
   async function handleCopyEmail() {
     if (!emailDraft) return;
@@ -558,14 +591,14 @@ export default function UploadPage() {
   const progressStep: 1 | 2 | 3 | null =
     stage.name === "upload" || stage.name === "uploading" || stage.name === "extracting"
       ? 1
-      : stage.name === "reviewing" || stage.name === "confirming"
+      : stage.name === "reviewing"
       ? 2
       : stage.name === "done"
       ? 3
       : null;
 
   return (
-    <main className="mx-auto w-full max-w-2xl px-4 py-8 sm:px-6">
+    <main className="mx-auto w-full max-w-[720px] px-4 py-8">
       <div className="mb-6 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <svg viewBox="0 0 32 32" fill="none" className="h-7 w-7" aria-hidden>
@@ -648,6 +681,9 @@ export default function UploadPage() {
 
       {stage.name === "reviewing" && (
         <section className="receipt-edge mt-2 flex flex-col gap-4 rounded-xl border border-line bg-card p-5 shadow-sm">
+          <button type="button" onClick={backToUpload} className="self-start text-sm text-ink-muted transition-colors hover:text-ink">
+            ← Back to upload
+          </button>
           {stage.notice && <p className="rounded-md bg-amber-soft px-3 py-2 text-sm text-amber">{stage.notice}</p>}
           <p className="text-sm text-ink-muted">Check this against your paper bill and fix anything that&apos;s wrong.</p>
 
@@ -759,16 +795,28 @@ export default function UploadPage() {
             </div>
           </div>
 
-          <button onClick={handleConfirm} disabled={!canConfirm} className={buttonPrimary}>
-            This matches my paper bill
+          <button
+            onClick={handleConfirm}
+            disabled={!canConfirm || isConfirming}
+            className={`${buttonPrimary} flex items-center justify-center gap-2`}
+          >
+            {isConfirming && (
+              <span
+                className="h-4 w-4 animate-spin rounded-full border-2 border-paper/40 border-t-paper"
+                aria-hidden
+              />
+            )}
+            {isConfirming ? "Saving..." : "This matches my paper bill"}
           </button>
         </section>
       )}
 
-      {stage.name === "confirming" && <p className="py-6 text-center text-ink-muted">Saving...</p>}
-
       {stage.name === "done" && (
         <section className="mt-2 flex flex-col gap-4">
+          <button type="button" onClick={backToReview} className="self-start text-sm text-ink-muted transition-colors hover:text-ink">
+            ← Back to review
+          </button>
+
           {stage.verdict.outcome === "clean" && (
             <div className="rounded-xl bg-emerald-soft p-5">
               <p className="font-serif text-xl text-emerald">✓ Your bill checks out.</p>
@@ -782,6 +830,15 @@ export default function UploadPage() {
               <p className="font-serif text-xl text-brick">We found a billing issue.</p>
               <p className="mt-1 text-ink-muted">
                 Difference: <span className="tabular-nums font-medium text-ink">{money(Math.abs(stage.verdict.facts.gap))}</span>
+              </p>
+            </div>
+          )}
+          {stage.verdict.outcome === "cannot_verify" && (
+            <div className="rounded-xl bg-amber-soft p-5">
+              <p className="font-serif text-xl text-amber">We couldn&apos;t verify this bill.</p>
+              <p className="mt-1 text-ink-muted">
+                Some lines may be missing or misread -- gap:{" "}
+                <span className="tabular-nums font-medium text-ink">{money(Math.abs(stage.verdict.facts.gap))}</span>
               </p>
             </div>
           )}
@@ -822,7 +879,7 @@ export default function UploadPage() {
             <ChecksSummary checks={stage.checks} total={stage.bill.total} />
           </div>
 
-          {stage.verdict.outcome !== "clean" && (
+          {outcomeDraftsEmail(stage.verdict.outcome) && (
             <div className={card}>
               <p className="mb-2 font-medium">{stage.verdict.outcome === "confirmed_error" ? "Dispute email" : "Inquiry email"}</p>
               {draftingEmail && <p className="text-ink-muted">Drafting...</p>}

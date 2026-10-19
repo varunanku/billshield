@@ -44,13 +44,32 @@ export function allNumbersAreFacts(draft: EmailDraft, facts: Facts): boolean {
   return found.every((n) => allowed.some((a) => Math.abs(a - n) <= NUMBER_EPSILON));
 }
 
+// Stricter than "is this number somewhere in facts": if the draft calls a
+// figure "the total" (or "totals"), that figure must specifically be
+// facts.total -- not billedAmount or gap mislabelled as the total. A draft
+// can be 100% fact-number-accurate per allNumbersAreFacts and still
+// mislead this way (e.g. calling the billed amount "the total"), so this
+// is a separate check, not folded into that one. Only checks the common
+// "total ... <number>" direction, not a number followed later by "total".
+const TOTAL_CLAIM = /\btotals?\b[^0-9₹]{0,20}(₹?\s*\d[\d,]*\.\d{2})/gi;
+
+export function totalClaimsAreCorrect(draft: EmailDraft, facts: Facts): boolean {
+  const text = `${draft.subject} ${draft.body}`;
+  const matches = [...text.matchAll(TOTAL_CLAIM)];
+  return matches.every((m) => Math.abs(Number(m[1].replace(/[₹,\s]/g, "")) - facts.total) <= NUMBER_EPSILON);
+}
+
+function passesNumberGuard(draft: EmailDraft, facts: Facts): boolean {
+  return allNumbersAreFacts(draft, facts) && totalClaimsAreCorrect(draft, facts);
+}
+
 function buildPrompt(facts: Facts, tone: Tone): string {
   const lineText =
     facts.disputedLines.length > 0
       ? facts.disputedLines.map((l) => `- ${l.label}: Rs ${l.amount.toFixed(2)}`).join("\n")
       : "(no single line identified -- write generally about the billed total)";
 
-  return `Write a short, polite email to a service provider about a billing question. Use ONLY the facts listed below. Never state, compute, infer, or round any amount that is not explicitly given here -- if you need a number, it must be one of these exact figures.
+  return `Write a short, polite email to a service provider about a billing question. Use ONLY the facts listed below. Never state, compute, infer, or round any amount that is not explicitly given here -- if you need a number, it must be one of these exact figures. Never refer to any figure as "the total" except the one explicitly labelled "Printed total" below -- do not call the billed amount, the difference, or any other figure "the total".
 
 Provider: ${facts.provider}
 Bill date: ${facts.billDate}
@@ -139,10 +158,10 @@ Thank you,
 
 export async function draftEmail(facts: Facts, tone: Tone): Promise<EmailDraft> {
   let draft = await callModel(facts, tone);
-  if (draft && !allNumbersAreFacts(draft, facts)) {
+  if (draft && !passesNumberGuard(draft, facts)) {
     draft = await callModel(facts, tone); // one regeneration attempt
   }
-  if (!draft || !allNumbersAreFacts(draft, facts)) {
+  if (!draft || !passesNumberGuard(draft, facts)) {
     return templateEmail(facts, tone);
   }
   return draft;
