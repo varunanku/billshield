@@ -143,9 +143,12 @@ Rules:
   "electricity", a broadband/Wi-Fi bill -> "internet", a phone/SIM recharge
   -> "mobile", a bank/card statement -> "credit_card", a supermarket/grocery
   receipt -> "groceries", a SaaS/subscription invoice -> "software", a
-  single appliance/electronics purchase receipt -> "appliance"). Use
-  "other" if genuinely unclear -- never guess a specific category you're
-  not confident about.
+  large home appliance purchase receipt (washing machine, refrigerator, AC,
+  mixer/grinder, fan) -> "appliance", a personal electronics purchase
+  receipt (phone, laptop, camera, headphones) -> "electronics", a
+  cosmetics/personal-care purchase receipt (soap, shampoo, toothpaste,
+  skincare, perfume) -> "cosmetics"). Use "other" if genuinely unclear --
+  never guess a specific category you're not confident about.
 - "billing_period_start"/"billing_period_end": only if the bill explicitly
   prints a billing/service period (e.g. "Billing period: 01 Jun - 30 Jun
   2026"). null if no period is printed -- never infer one from the bill date.

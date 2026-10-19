@@ -18,7 +18,17 @@ export const LINE_ROLES: LineRole[] = [
 
 // Closed list (hard rule: never a free-text category) -- also what
 // category_rates.category must match for the GST reference lookup.
-export type BillCategory = "electricity" | "internet" | "mobile" | "credit_card" | "groceries" | "software" | "appliance" | "other";
+export type BillCategory =
+  | "electricity"
+  | "internet"
+  | "mobile"
+  | "credit_card"
+  | "groceries"
+  | "software"
+  | "appliance"
+  | "electronics"
+  | "cosmetics"
+  | "other";
 export const BILL_CATEGORIES: BillCategory[] = [
   "electricity",
   "internet",
@@ -27,6 +37,8 @@ export const BILL_CATEGORIES: BillCategory[] = [
   "groceries",
   "software",
   "appliance",
+  "electronics",
+  "cosmetics",
   "other",
 ];
 

@@ -1,6 +1,40 @@
 category,item_keyword,hsn_prefix,gst_rate_total,cgst,sgst,igst,source_url,effective_from
-electricity,TODO,,,,,,,
-internet,TODO,,,,,,,
-mobile,TODO,,,,,,,
-groceries,TODO,,,,,,,
-appliance,TODO,,,,,,,
+groceries,packaged food,2106,5.00,2.50,2.50,5.00,https://taxo.online/wp-content/uploads/2025/09/09_2025-CTR.pdf,2025-09-22
+groceries,rice packed,1006,5.00,2.50,2.50,5.00,https://taxo.online/wp-content/uploads/2025/09/09_2025-CTR.pdf,2025-09-22
+groceries,edible oil,1507,5.00,2.50,2.50,5.00,https://taxo.online/wp-content/uploads/2025/09/09_2025-CTR.pdf,2025-09-22
+groceries,spices,0904,5.00,2.50,2.50,5.00,https://taxo.online/wp-content/uploads/2025/09/09_2025-CTR.pdf,2025-09-22
+groceries,sugar,1701,5.00,2.50,2.50,5.00,https://taxo.online/wp-content/uploads/2025/09/09_2025-CTR.pdf,2025-09-22
+groceries,namkeen bhujia,2106,5.00,2.50,2.50,5.00,https://taxo.online/wp-content/uploads/2025/09/09_2025-CTR.pdf,2025-09-22
+groceries,biscuits,1905,5.00,2.50,2.50,5.00,https://taxo.online/wp-content/uploads/2025/09/09_2025-CTR.pdf,2025-09-22
+groceries,dairy butter cheese,0405,5.00,2.50,2.50,5.00,https://taxo.online/wp-content/uploads/2025/09/09_2025-CTR.pdf,2025-09-22
+groceries,fresh vegetables,0701,0.00,0.00,0.00,0.00,https://taxo.online/wp-content/uploads/2025/09/09_2025-CTR.pdf,2025-09-22
+groceries,fresh fruits,0803,0.00,0.00,0.00,0.00,https://taxo.online/wp-content/uploads/2025/09/09_2025-CTR.pdf,2025-09-22
+groceries,milk,0401,0.00,0.00,0.00,0.00,https://taxo.online/wp-content/uploads/2025/09/09_2025-CTR.pdf,2025-09-22
+groceries,eggs,0407,0.00,0.00,0.00,0.00,https://taxo.online/wp-content/uploads/2025/09/09_2025-CTR.pdf,2025-09-22
+groceries,unbranded atta flour,1101,0.00,0.00,0.00,0.00,https://taxo.online/wp-content/uploads/2025/09/09_2025-CTR.pdf,2025-09-22
+groceries,chocolate cocoa,1806,18.00,9.00,9.00,18.00,https://taxo.online/wp-content/uploads/2025/09/09_2025-CTR.pdf,2025-09-22
+groceries,ice cream,2105,18.00,9.00,9.00,18.00,https://taxo.online/wp-content/uploads/2025/09/09_2025-CTR.pdf,2025-09-22
+appliance,mixer grinder juicer,8509,18.00,9.00,9.00,18.00,https://razorpay.com/learn/gst-rates-goods-and-service-tax-rates-slabs/,2025-09-22
+appliance,washing machine,8450,18.00,9.00,9.00,18.00,https://razorpay.com/learn/gst-rates-goods-and-service-tax-rates-slabs/,2025-09-22
+appliance,refrigerator,8418,18.00,9.00,9.00,18.00,https://razorpay.com/learn/gst-rates-goods-and-service-tax-rates-slabs/,2025-09-22
+appliance,air conditioner,8415,18.00,9.00,9.00,18.00,https://taxo.online/wp-content/uploads/2025/09/09_2025-CTR.pdf,2025-09-22
+appliance,television monitor,8528,18.00,9.00,9.00,18.00,https://taxo.online/wp-content/uploads/2025/09/09_2025-CTR.pdf,2025-09-22
+appliance,fan,8414,18.00,9.00,9.00,18.00,https://taxo.online/wp-content/uploads/2025/09/09_2025-CTR.pdf,2025-09-22
+electronics,mobile phone,8517,18.00,9.00,9.00,18.00,https://razorpay.com/learn/gst-rates-goods-and-service-tax-rates-slabs/,2025-09-22
+electronics,laptop computer,8471,18.00,9.00,9.00,18.00,https://razorpay.com/learn/gst-rates-goods-and-service-tax-rates-slabs/,2025-09-22
+electronics,camera,9006,18.00,9.00,9.00,18.00,https://razorpay.com/learn/gst-rates-goods-and-service-tax-rates-slabs/,2025-09-22
+electronics,headphones earphones,8518,18.00,9.00,9.00,18.00,https://razorpay.com/learn/gst-rates-goods-and-service-tax-rates-slabs/,2025-09-22
+cosmetics,toothpaste,3306,5.00,2.50,2.50,5.00,https://taxo.online/wp-content/uploads/2025/09/09_2025-CTR.pdf,2025-09-22
+cosmetics,soap toilet,3401,5.00,2.50,2.50,5.00,https://taxo.online/wp-content/uploads/2025/09/09_2025-CTR.pdf,2025-09-22
+cosmetics,shampoo hair oil,3305,5.00,2.50,2.50,5.00,https://taxo.online/wp-content/uploads/2025/09/09_2025-CTR.pdf,2025-09-22
+cosmetics,shaving cream,3307,5.00,2.50,2.50,5.00,https://taxo.online/wp-content/uploads/2025/09/09_2025-CTR.pdf,2025-09-22
+cosmetics,perfume toilet water,3303,18.00,9.00,9.00,18.00,https://razorpay.com/learn/gst-rates-goods-and-service-tax-rates-slabs/,2025-09-22
+cosmetics,skincare cream lotion,3304,18.00,9.00,9.00,18.00,https://razorpay.com/learn/gst-rates-goods-and-service-tax-rates-slabs/,2025-09-22
+cosmetics,sanitary napkin,9619,0.00,0.00,0.00,0.00,https://razorpay.com/learn/gst-rates-goods-and-service-tax-rates-slabs/,2025-09-22
+internet,telecom service,9984,18.00,9.00,9.00,18.00,https://razorpay.com/learn/gst-rates-goods-and-service-tax-rates-slabs/,2025-09-22
+internet,broadband internet,9984,18.00,9.00,9.00,18.00,https://razorpay.com/learn/gst-rates-goods-and-service-tax-rates-slabs/,2025-09-22
+software,saas subscription,9983,18.00,9.00,9.00,18.00,https://razorpay.com/learn/gst-rates-goods-and-service-tax-rates-slabs/,2025-09-22
+software,cloud hosting,9983,18.00,9.00,9.00,18.00,https://razorpay.com/learn/gst-rates-goods-and-service-tax-rates-slabs/,2025-09-22
+electricity,electricity supply,9969,18.00,9.00,9.00,18.00,https://razorpay.com/learn/gst-rates-goods-and-service-tax-rates-slabs/,2025-09-22
+mobile,mobile recharge prepaid,9984,18.00,9.00,9.00,18.00,https://razorpay.com/learn/gst-rates-goods-and-service-tax-rates-slabs/,2025-09-22
+mobile,mobile postpaid,9984,18.00,9.00,9.00,18.00,https://razorpay.com/learn/gst-rates-goods-and-service-tax-rates-slabs/,2025-09-22
