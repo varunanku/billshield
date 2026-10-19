@@ -84,8 +84,9 @@ a similar label does have a printed amount.
 - "payment": an amount actually paid or received (e.g. "Paid Amount", "Amount Received").
 - "balance": an outstanding, due, or credit balance (e.g. "Outstanding Amount", "Balance Due"). A
   row labelled "Total", "Grand Total", "Total Amount", "Final Total", "Amount
-  Payable", or "Amount Due" is role "balance", NEVER "charge" -- it restates
-  a total, it is not itself a new charge.
+  Payable", "Amount Due", "Net Payable", or "Pay On Delivery" is role
+  "balance", NEVER "charge" and NEVER "payment" -- these restate what is
+  owed, not an amount actually paid or received.
 - "subtotal": a running or sub total line (not the final grand total -- that's the separate "total" field above). If the exact same subtotal amount is printed twice under two different labels (e.g. "Subtotal" and, right below it, "Amount Before Tax", both showing the same figure), extract it only once, as a single line item.
 - "info": a non-monetary printed number that is not itself an amount owed or
   paid -- units consumed, kW/kVA, meter readings, a percentage rate, a
@@ -131,7 +132,10 @@ Rules:
   2-digit year (e.g. "24" or "'24"), expand it to the 2000s (20YY), never
   1900s -- a bill never predates the year 2000.
 - "provider": the brand or product name the customer actually recognises --
-  from the logo, letterhead, or product name (e.g. "Overleaf", "Airtel").
+  from the logo, letterhead, or product name (e.g. "Overleaf", "Airtel"). If
+  no provider name or logo text is clearly printed anywhere on the bill,
+  return null -- never guess one from context (a payment app's name, a
+  generic "Receipt" template, a file name, or the category of bill).
 - "provider_legal_name": the registered company name, ONLY if separately
   printed (e.g. in small print, an address block, or a footer) and
   different from the brand -- for example a bill from "Overleaf" might

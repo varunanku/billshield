@@ -338,8 +338,6 @@ function ChecksSummary({ checks, total }: { checks: BillChecks; total: number })
           Payment check: billed {money(checks.billedSum)} vs paid {money(checks.payment.amountPaid)} --{" "}
           {checks.payment.verdict === "overpaid"
             ? `overpaid by ${money(Math.abs(checks.payment.signedDifference))}`
-            : checks.payment.verdict === "dispute"
-            ? `underpaid by ${money(checks.payment.signedDifference)}`
             : "paid in full"}
           {checks.payment.reconcilingBalanceLabel &&
             ` (matches the "${checks.payment.reconcilingBalanceLabel}" line)`}
@@ -499,10 +497,12 @@ export default function UploadPage() {
     [parsedLines, extraFields.category, categoryRates]
   );
 
+  // Provider, bill date and printed total are all optional -- missing any
+  // (or all three) of them never blocks confirm. The only things that do:
+  // no lines at all, or an amount (a line's, or the total's) that's been
+  // typed into but isn't a valid number -- blank is fine, garbled isn't.
   const canConfirm =
-    provider.trim().length > 0 &&
-    /^\d{4}-\d{2}-\d{2}$/.test(billDate) &&
-    parsedTotalValue !== null &&
+    (total.trim() === "" || parsedTotalValue !== null) &&
     lines.length > 0 &&
     lines.every((l) => l.label.trim().length > 0 && parseAmountInput(l.amount) !== null);
 
@@ -1127,7 +1127,11 @@ export default function UploadPage() {
                 />
               ) : (
                 <div className="flex items-center gap-2">
-                  <span className="font-medium">{provider || "(not set)"}</span>
+                  {provider ? (
+                    <span className="font-medium">{provider}</span>
+                  ) : (
+                    <span className="text-text-muted">Add provider (optional)</span>
+                  )}
                   <PencilButton label="Edit provider" onClick={() => setEditingField("provider")} />
                 </div>
               )}
@@ -1146,7 +1150,11 @@ export default function UploadPage() {
                 />
               ) : (
                 <div className="flex items-center gap-2">
-                  <span className="font-medium">{billDate || "(not set)"}</span>
+                  {billDate ? (
+                    <span className="font-medium">{billDate}</span>
+                  ) : (
+                    <span className="text-text-muted">Add date (optional)</span>
+                  )}
                   <PencilButton label="Edit bill date" onClick={() => setEditingField("billDate")} />
                 </div>
               )}

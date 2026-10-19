@@ -103,12 +103,14 @@ export function decideVerdict(input: {
   // Hard evidence: we know exactly what was billed and exactly what was
   // paid. billed is charge+tax-discount only -- an outstanding/arrears
   // line is never credited in (see lib/bill-checks.ts); it's mentioned in
-  // the email, not folded into the maths.
-  if (checks.payment && checks.payment.verdict !== "even") {
+  // the email, not folded into the maths. Paying less than billed is never
+  // reported (bill-checks.ts already collapses that case to payment: null),
+  // so the only non-"even" verdict that can reach here is "overpaid".
+  if (checks.payment && checks.payment.verdict === "overpaid") {
     return {
       outcome: "confirmed_error",
       tone: "confident",
-      reason: checks.payment.verdict === "overpaid" ? "overpaid" : "mismatch",
+      reason: "overpaid",
       facts: baseFacts(checks.payment.signedDifference, [], checks.payment.reconcilingBalanceLabel),
     };
   }

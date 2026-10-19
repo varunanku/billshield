@@ -95,14 +95,14 @@ export type BillChecks = {
   arithmeticCoveredByPayment: boolean; // true: a payment-role line exists, so the dedicated payment check (not this generic one) is the relevant lens
   payment: {
     amountPaid: number;
-    signedDifference: number; // billedSum - amountPaid; positive = dispute (billed more than paid), negative = overpaid
-    verdict: "dispute" | "overpaid" | "even"; // "even" within ROUNDING_TOLERANCE, not just floating-point EPSILON
+    signedDifference: number; // billedSum - amountPaid; always < 0 here (overpaid) -- see verdict below
+    verdict: "overpaid" | "even"; // "even" within ROUNDING_TOLERANCE, not just floating-point EPSILON
     // Mention-only, never changes verdict/sign above: an "outstanding" /
     // "arrears" / "previous due" balance line whose amount matches the
     // excess -- likely why the payment covered more than just this
     // period's new charge, worth noting in the email, not a separate fact.
     reconcilingBalanceLabel: string | null;
-  } | null; // null when there's no payment-role line, OR when a statement check (opening line) supersedes it
+  } | null; // null when there's no payment-role line (a 0-amount payment line counts as absent), when the paid amount is less than billed (never reported -- see computeBillChecks), OR when a statement check (opening line) supersedes it
   checkpoints: Checkpoint[]; // one per subtotal-role line, in document order (a duplicate subtotal under a second label is not a separate checkpoint)
   warnings: SuspiciousGapWarning[]; // a charge line that suspiciously equals (total - a subtotal)
   reclassifiedAsBalance: Reclassification[]; // charge/tax lines the code itself reclassified (label read as total/payable/due and the amount matched the printed total)
@@ -167,12 +167,14 @@ function sumByRole(lineItems: BillLine[], role: LineRole): number {
 }
 
 // Deterministic safety net: a row labelled like a total ("Total", "Amount
-// Payable", "Amount Due", ...) whose amount exactly matches the bill's own
-// printed total should never have been charge/tax in the first place -- it
-// restates the total, it isn't a new charge. The prompt already tells the
+// Payable", "Amount Due", "Net Payable", "Pay On Delivery", ...) whose
+// amount exactly matches the bill's own printed total should never have
+// been charge/tax/payment in the first place -- it restates the total, it
+// isn't a new charge, and (COD/"Net Payable" especially) it isn't money
+// already paid either, just what's owed. The prompt already tells the
 // model this, but prompts aren't 100% reliable (see chat history), so code
 // catches it too and reclassifies it to "balance" before anything else runs.
-const TOTAL_LIKE_LABEL = /total|payable|due/i;
+const TOTAL_LIKE_LABEL = /total|payable|due|pay\s*on\s*delivery/i;
 
 function reclassifyTotalLikeLines(
   lineItems: BillLine[],
@@ -181,7 +183,7 @@ function reclassifyTotalLikeLines(
   const reclassified: Reclassification[] = [];
   const effective = lineItems.map((li) => {
     if (
-      (li.role === "charge" || li.role === "tax") &&
+      (li.role === "charge" || li.role === "tax" || li.role === "payment") &&
       TOTAL_LIKE_LABEL.test(li.label) &&
       Math.abs(li.amount - total) <= EPSILON
     ) {
@@ -386,15 +388,22 @@ export function computeBillChecks(lineItems: BillLine[], total: number): BillChe
   // not a reconciled "even" -- see lib/verdict.ts's dedicated payment branch.
   const RECONCILING_BALANCE_LABEL = /outstanding|arrear|previous.?(due|balance)/i;
 
-  const paymentLines = effectiveLineItems.filter((li) => li.role === "payment");
+  // A 0-amount payment line (e.g. "Advance (Online): 0") is printed on some
+  // bills as a placeholder, not an actual payment -- treated as absent, the
+  // same as if the line weren't there at all.
+  const paymentLines = effectiveLineItems.filter((li) => li.role === "payment" && li.amount > EPSILON);
   let payment =
     paymentLines.length === 0
       ? null
       : (() => {
           const amountPaid = paymentLines.reduce((s, li) => s + li.amount, 0);
           const signedDifference = billedSum - amountPaid;
-          const verdict: "dispute" | "overpaid" | "even" =
-            signedDifference > ROUNDING_TOLERANCE ? "dispute" : signedDifference < -ROUNDING_TOLERANCE ? "overpaid" : "even";
+          // Paying less than billed (or exactly billed is handled below) is
+          // never reported: a partial payment isn't evidence of a billing
+          // error, and the person already knows what they paid. Collapsed to
+          // "no payment check at all", exactly like a 0-amount/absent line.
+          if (signedDifference > ROUNDING_TOLERANCE) return null;
+          const verdict: "overpaid" | "even" = signedDifference < -ROUNDING_TOLERANCE ? "overpaid" : "even";
           const reconcilingBalance = effectiveLineItems.find(
             (li) =>
               li.role === "balance" &&

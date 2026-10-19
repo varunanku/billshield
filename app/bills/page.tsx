@@ -82,7 +82,9 @@ async function BillsList() {
   const groups = groupBillsByProvider(
     (bills ?? []).map((b) => ({
       id: b.id,
-      provider: b.provider_name,
+      // "Unknown provider" is confirm's storage-only placeholder for the
+      // NOT NULL provider_name column -- never shown to a user.
+      provider: b.provider_name === "Unknown provider" ? "your provider" : b.provider_name,
       billDate: b.bill_date,
       total: Number(b.total_amount),
       verdictOutcome: b.verdict_outcome,

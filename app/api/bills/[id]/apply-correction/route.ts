@@ -92,7 +92,12 @@ export async function POST(request: Request, routeContext: { params: Promise<{ i
       return json({ success: false, reason: "bad_request", message: "That line no longer exists on this bill." }, 400);
     }
 
-    const before = { provider: bill.provider_name, billDate: bill.bill_date, total: Number(bill.total_amount), lines };
+    // "Unknown provider" is confirm's storage-only placeholder for bills.
+    // provider_name's NOT NULL column (see app/api/bills/confirm/route.ts) --
+    // never shown to a user, so it's translated back to "your provider" the
+    // same way here, before it reaches the verdict/email/display layer.
+    const rawProvider = bill.provider_name === "Unknown provider" ? "your provider" : bill.provider_name;
+    const before = { provider: rawProvider, billDate: bill.bill_date, total: Number(bill.total_amount), lines };
     const after = applyCorrection(before, correction);
 
     const { data: promiseRow } = await supabase

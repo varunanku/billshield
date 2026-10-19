@@ -104,10 +104,20 @@ export async function POST(request: Request) {
     return json({ success: false, reason: "unauthorized", message: "That file doesn't belong to you." }, 401);
   }
 
-  const checks = computeBillChecks(line_items, total);
-  const verdict = decideVerdict({ lines: line_items, total, provider, billDate: bill_date, checks, promise });
+  // Neither is required on the review screen. "your provider"/today's date
+  // are what the user, My bills and the drafted email see; bills.provider_
+  // name and bill_date are NOT NULL columns (supabase/migrations/0001_init.sql),
+  // so a missing provider is stored as the distinct sentinel "Unknown
+  // provider" instead (never shown to a user -- see app/bills/page.tsx),
+  // and a missing date is stored as the day it was confirmed, since there's
+  // no printed one to fall back on.
+  const displayProvider = provider ? maskPII(provider) : "your provider";
+  const storedProvider = provider ? displayProvider : "Unknown provider";
+  const storedBillDate = bill_date || new Date().toISOString().slice(0, 10);
 
-  const maskedProvider = maskPII(provider);
+  const checks = computeBillChecks(line_items, total);
+  const verdict = decideVerdict({ lines: line_items, total, provider: displayProvider, billDate: storedBillDate, checks, promise });
+
   const maskedProviderLegalName = provider_legal_name ? maskPII(provider_legal_name) : null;
   // toPersistedLines decides which rows exist and their amount sign/label
   // convention (see lib/bill-checks.ts); masking the label text is still
@@ -121,9 +131,9 @@ export async function POST(request: Request) {
     .from("bills")
     .insert({
       user_id: user.id,
-      provider_name: maskedProvider,
+      provider_name: storedProvider,
       provider_legal_name: maskedProviderLegalName,
-      bill_date,
+      bill_date: storedBillDate,
       total_amount: total,
       file_path: path,
       category,
@@ -187,9 +197,9 @@ export async function POST(request: Request) {
       success: true,
       bill: {
         id: bill.id,
-        provider: maskedProvider,
+        provider: displayProvider,
         providerLegalName: maskedProviderLegalName,
-        billDate: bill_date,
+        billDate: storedBillDate,
         total,
         lineItems: maskedLineItems,
       },
@@ -209,14 +219,16 @@ function validatePayload(value: unknown): { ok: true; data: ConfirmPayload } | {
   const path = typeof v.path === "string" ? v.path : "";
   if (!path) return { ok: false, message: "No uploaded file path was given." };
 
+  // Both optional -- a bill with no printed provider name or date can still
+  // be confirmed (see computeConfirm below for how a missing one is stored
+  // and displayed).
   const provider = typeof v.provider === "string" ? v.provider.trim() : "";
-  if (!provider) return { ok: false, message: "Please enter the provider name." };
 
   const providerLegalNameRaw = typeof v.provider_legal_name === "string" ? v.provider_legal_name.trim() : "";
   const provider_legal_name = providerLegalNameRaw || null;
 
-  const bill_date = typeof v.bill_date === "string" ? v.bill_date : "";
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(bill_date)) {
+  const bill_date = typeof v.bill_date === "string" ? v.bill_date.trim() : "";
+  if (bill_date && !/^\d{4}-\d{2}-\d{2}$/.test(bill_date)) {
     return { ok: false, message: "Please enter a valid bill date." };
   }
 
