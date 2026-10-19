@@ -123,7 +123,7 @@ export async function answerFollowupQuestion(systemPrompt: string, history: Chat
       body: JSON.stringify({
         systemInstruction: { parts: [{ text: systemPrompt }] },
         contents,
-        generationConfig: { temperature: 0 },
+        generationConfig: { temperature: 0, responseMimeType: "application/json" },
       }),
     });
   } catch (e) {

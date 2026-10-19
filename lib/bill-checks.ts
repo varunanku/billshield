@@ -119,6 +119,22 @@ export function toPersistedLines(lineItems: BillLine[]): PersistedLine[] {
     }));
 }
 
+// The inverse of toPersistedLines, for a later correction (Phase 2's chat
+// corrections) that needs to recompute checks/verdict from stored rows.
+// Reverses the one sign convention toPersistedLines applies (discount
+// stored negated) back to BillLine's own positive-magnitude convention --
+// balance/subtotal/info/opening rows are still gone for good (never
+// stored), so a correction can't restore a checkpoint that was dropped
+// before confirm; this only reconstructs what was actually persisted.
+export function fromPersistedLines(rows: { label: string; amount: number; role: LineRole; unrecognized: boolean }[]): BillLine[] {
+  return rows.map((row) => ({
+    label: row.label,
+    amount: row.role === "discount" ? -row.amount : row.amount,
+    role: row.role,
+    unrecognized: row.unrecognized,
+  }));
+}
+
 function sumByRole(lineItems: BillLine[], role: LineRole): number {
   return lineItems.filter((li) => li.role === role).reduce((s, li) => s + li.amount, 0);
 }

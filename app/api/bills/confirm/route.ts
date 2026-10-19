@@ -114,6 +114,7 @@ export async function POST(request: Request) {
       line_order: index + 1,
       label: li.label,
       amount: li.amount,
+      role: li.role,
       flagged: li.unrecognized,
     }))
   );

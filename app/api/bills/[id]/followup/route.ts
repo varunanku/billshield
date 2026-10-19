@@ -1,17 +1,40 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { LINE_ROLES, type LineRole } from "@/lib/bill-checks";
-import { buildFollowupSystemPrompt, MAX_FOLLOWUP_MESSAGES, type FollowupBillContext, type ChatTurn } from "@/lib/followup";
-import { answerFollowupQuestion as askGroq } from "@/lib/groq";
+import {
+  buildFollowupSystemPrompt,
+  parseFollowupReply,
+  MAX_FOLLOWUP_MESSAGES,
+  type FollowupBillContext,
+  type ChatTurn,
+  type FollowupReply,
+} from "@/lib/followup";
+import { answerFollowupQuestion as askGroq, type ChatResult } from "@/lib/groq";
 import { answerFollowupQuestion as askGemini } from "@/lib/gemini";
 import { USE_GROQ } from "@/lib/provider";
 
-export const maxDuration = 30;
+export const maxDuration = 45;
 
-const answerFollowupQuestion = USE_GROQ ? askGroq : askGemini;
+// Gemini is the default/primary provider; on a 429 from it specifically,
+// wait the given retry-after (capped, so this route can't blow its own
+// time budget), retry once, and if that's still rate-limited, fall back
+// to Groq for this one answer rather than failing the turn outright.
+async function answerFollowupQuestion(systemPrompt: string, history: ChatTurn[]): Promise<ChatResult> {
+  const primary = USE_GROQ ? askGroq : askGemini;
+  const result = await primary(systemPrompt, history);
+  if (result.ok || result.kind !== "rate_limited" || USE_GROQ) return result;
+
+  const waitSeconds = Math.min(result.retryAfterSeconds ?? 5, 10);
+  await new Promise((resolve) => setTimeout(resolve, waitSeconds * 1000));
+
+  const retried = await askGemini(systemPrompt, history);
+  if (retried.ok || retried.kind !== "rate_limited") return retried;
+
+  return askGroq(systemPrompt, history);
+}
 
 type ApiResponse =
-  | { success: true; answer: string; messagesUsed: number }
+  | { success: true; reply: FollowupReply; messagesUsed: number }
   | { success: false; reason: "bad_request" | "unauthorized" | "rate_limited" | "server_error"; message: string };
 
 function json(body: ApiResponse, status: number) {
@@ -113,9 +136,21 @@ export async function POST(request: Request, routeContext: { params: Promise<{ i
       );
     }
 
+    const reply = parseFollowupReply(result.text);
+    // A correction proposal is stored as a readable summary, not the raw
+    // JSON -- it's what later history-building re-feeds the model as this
+    // turn's content, and it's what a human would see if they ever read
+    // the messages table directly.
+    const assistantBody =
+      reply.type === "answer"
+        ? reply.text
+        : `Proposed correction: ${reply.correction.field}${
+            reply.correction.line_index !== null ? ` #${reply.correction.line_index}` : ""
+          } -> ${reply.correction.new_label ?? reply.correction.new_amount ?? reply.correction.new_role ?? "?"} (${reply.correction.reason})`;
+
     const { error: insertError } = await supabase.from("messages").insert([
       { bill_id: billId, type: "followup", role: "user", body: question },
-      { bill_id: billId, type: "followup", role: "assistant", body: result.text },
+      { bill_id: billId, type: "followup", role: "assistant", body: assistantBody },
     ]);
     if (insertError) {
       console.error("Follow-up message insert failed:", insertError);
@@ -125,7 +160,7 @@ export async function POST(request: Request, routeContext: { params: Promise<{ i
       );
     }
 
-    return json({ success: true, answer: result.text, messagesUsed: userTurnsUsed + 1 }, 200);
+    return json({ success: true, reply, messagesUsed: userTurnsUsed + 1 }, 200);
   } catch (err) {
     // Catches anything the specific checks above didn't anticipate (a bad
     // env var, a malformed response, etc.) so the client always gets a

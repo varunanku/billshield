@@ -15,7 +15,7 @@ import {
   type Checkpoint,
 } from "@/lib/bill-checks";
 import { shouldDraftEmail, type Verdict } from "@/lib/verdict";
-import { MAX_FOLLOWUP_MESSAGES, type FollowupBillContext } from "@/lib/followup";
+import { MAX_FOLLOWUP_MESSAGES, type FollowupBillContext, type FollowupReply, type Correction } from "@/lib/followup";
 import type { TonePreset } from "@/lib/email-draft";
 import { isSuspiciousBillDate } from "@/lib/date-check";
 
@@ -47,6 +47,18 @@ type ConfirmResponse =
 type DraftEmailResponse =
   | { success: true; messageId: string; subject: string; body: string; isDefaultTone: boolean }
   | { success: false; reason: string; message: string };
+
+type FollowupApiResponse =
+  | { success: true; reply: FollowupReply; messagesUsed: number }
+  | { success: false; reason: string; message: string };
+
+type ApplyCorrectionResponse =
+  | { success: true; bill: ConfirmedBill; checks: BillChecks; verdict: Verdict }
+  | { success: false; reason: string; message: string };
+
+type ChatEntry =
+  | { kind: "text"; role: "user" | "assistant"; content: string }
+  | { kind: "correction"; correction: Correction; status: "pending" | "applied" | "dismissed" };
 
 const TONE_PRESET_OPTIONS: { value: TonePreset; label: string }[] = [
   { value: "polite", label: "Polite" },
@@ -143,6 +155,21 @@ function ProgressSteps({ current }: { current: 1 | 2 | 3 }) {
 // A checkpoint (the running sum up to one subtotal line) rendered as a
 // small inline stamp next to that subtotal's row, rather than a block of
 // text below the table.
+// Toggles a single field into edit mode on the (otherwise read-only)
+// review screen -- see editingField in UploadPage.
+function PencilButton({ onClick, label }: { onClick: () => void; label: string }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={label}
+      className="min-h-6 min-w-6 rounded-full text-ink-muted transition-colors hover:text-ink"
+    >
+      ✎
+    </button>
+  );
+}
+
 function CheckpointStamp({
   checkpoint,
   onRemoveSuggestion,
@@ -278,6 +305,13 @@ export default function UploadPage() {
   const [total, setTotal] = useState("");
   const [lines, setLines] = useState<EditableLine[]>([]);
 
+  // Review screen fields are read-only until the pencil next to them is
+  // clicked -- editingField holds which one ("provider" | "billDate" |
+  // "total" | `line-${index}` | null for none). showAddLine gates "+ Add
+  // line" behind the "Something missing?" link.
+  const [editingField, setEditingField] = useState<string | null>(null);
+  const [showAddLine, setShowAddLine] = useState(false);
+
   // Optional -- "What were you promised?" A promise with no number still
   // saves (drives the unexplained/inquiry outcome); leaving both blank
   // means no promise row at all.
@@ -305,12 +339,16 @@ export default function UploadPage() {
 
   // Follow-up chat, shown under the verdict. Local-only state: each turn is
   // also persisted server-side (messages, type=followup) by the route, but
-  // the thread displayed here is just what's accumulated this session.
-  const [chatMessages, setChatMessages] = useState<{ role: "user" | "assistant"; content: string }[]>([]);
+  // the thread displayed here is just what's accumulated this session. A
+  // correction entry renders as its own "Apply/Dismiss" card instead of a
+  // plain chat bubble.
+  const [chatMessages, setChatMessages] = useState<ChatEntry[]>([]);
   const [chatInput, setChatInput] = useState("");
   const [chatSending, setChatSending] = useState(false);
+  const [chatBusyRetrying, setChatBusyRetrying] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
   const [chatLimitReached, setChatLimitReached] = useState(false);
+  const [applyingCorrection, setApplyingCorrection] = useState(false);
 
   // Counts down a rate-limited retry wait so "Try again" has something
   // honest to show instead of a static message. The target end time lives
@@ -398,6 +436,8 @@ export default function UploadPage() {
       setLines(
         data.extraction.line_items.map((li) => ({ label: li.label, amount: String(li.amount), role: li.role }))
       );
+      setEditingField(null);
+      setShowAddLine(false);
       setStage({ name: "reviewing", notice: data.notice });
     } catch {
       setStage({ name: "error", message: "Couldn't reach the server. Check your connection and try again." });
@@ -484,6 +524,8 @@ export default function UploadPage() {
       setChatInput("");
       setChatError(null);
       setChatLimitReached(false);
+      setChatBusyRetrying(false);
+      setApplyingCorrection(false);
       setIsConfirming(false);
       setStage({ name: "done", bill: data.bill, checks: data.checks, verdict: data.verdict });
     } catch {
@@ -513,6 +555,8 @@ export default function UploadPage() {
     setBillDate("");
     setTotal("");
     setLines([]);
+    setEditingField(null);
+    setShowAddLine(false);
     setPromiseStatement("");
     setPromiseAmount("");
     setEmailDraft(null);
@@ -525,6 +569,8 @@ export default function UploadPage() {
     setChatInput("");
     setChatError(null);
     setChatLimitReached(false);
+    setChatBusyRetrying(false);
+    setApplyingCorrection(false);
     setStage({ name: "upload" });
   }
 
@@ -534,6 +580,7 @@ export default function UploadPage() {
 
   function addLine() {
     setLines((prev) => [...prev, { label: "", amount: "", role: "charge" }]);
+    setEditingField(`line-${lines.length}`);
   }
 
   function deleteLine(index: number) {
@@ -693,6 +740,34 @@ export default function UploadPage() {
   // Built fresh from whatever's currently in `stage` -- bill/checks/verdict
   // were already fully computed server-side at confirm time, and have just
   // lived in this state since (same pattern as draft-email's `facts`).
+  // "Change X from A to B" -- the current value comes from the bill
+  // already in state; the correction only ever carries the proposed new
+  // one(s). Never shows a number the correction didn't actually propose.
+  function describeCorrection(correction: Correction, bill: ConfirmedBill): string {
+    if (correction.field === "provider") {
+      return `Change provider from "${bill.provider}" to "${correction.new_label}"`;
+    }
+    if (correction.field === "bill_date") {
+      return `Change bill date from "${bill.billDate}" to "${correction.new_label}"`;
+    }
+    if (correction.field === "printed_total") {
+      return `Change printed total from Rs ${money(bill.total)} to Rs ${money(correction.new_amount ?? bill.total)}`;
+    }
+    const current = correction.line_index !== null ? bill.lineItems[correction.line_index] : undefined;
+    if (!current) return "Change a line on this bill";
+    const parts: string[] = [];
+    if (correction.new_label !== null && correction.new_label !== current.label) {
+      parts.push(`label from "${current.label}" to "${correction.new_label}"`);
+    }
+    if (correction.new_amount !== null && Math.abs(correction.new_amount - current.amount) > 0.001) {
+      parts.push(`amount from Rs ${money(current.amount)} to Rs ${money(correction.new_amount)}`);
+    }
+    if (correction.new_role !== null && correction.new_role !== current.role) {
+      parts.push(`category from ${ROLE_LABELS[current.role]} to ${ROLE_LABELS[correction.new_role]}`);
+    }
+    return parts.length > 0 ? `Change "${current.label}" ${parts.join(", ")}` : `Change "${current.label}"`;
+  }
+
   function buildFollowupContext(bill: ConfirmedBill, checks: BillChecks, verdict: Verdict): FollowupBillContext {
     const facts = "facts" in verdict ? verdict.facts : null;
     return {
@@ -715,7 +790,13 @@ export default function UploadPage() {
     setChatInput("");
     setChatError(null);
     setChatSending(true);
-    setChatMessages((prev) => [...prev, { role: "user", content: question }]);
+    setChatMessages((prev) => [...prev, { kind: "text", role: "user", content: question }]);
+
+    // Purely cosmetic reassurance, not a real-time status feed: the actual
+    // Gemini-429-retry-then-Groq-fallback happens server-side inside one
+    // request/response, so this is the closest a plain fetch can get to
+    // "never a dead end" while that's in flight.
+    const busyTimer = setTimeout(() => setChatBusyRetrying(true), 4000);
 
     try {
       const res = await fetch(`/api/bills/${stage.bill.id}/followup`, {
@@ -723,20 +804,65 @@ export default function UploadPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ question, context: buildFollowupContext(stage.bill, stage.checks, stage.verdict) }),
       });
-      const data: { success: true; answer: string; messagesUsed: number } | { success: false; reason: string; message: string } =
-        await res.json();
+      const data: FollowupApiResponse = await res.json();
 
       if (!data.success) {
         setChatError(data.message);
         if (data.reason === "rate_limited" && res.status === 429) setChatLimitReached(true);
         return;
       }
-      setChatMessages((prev) => [...prev, { role: "assistant", content: data.answer }]);
+      setChatMessages((prev) => [
+        ...prev,
+        data.reply.type === "answer"
+          ? { kind: "text", role: "assistant", content: data.reply.text }
+          : { kind: "correction", correction: data.reply.correction, status: "pending" },
+      ]);
       if (data.messagesUsed >= MAX_FOLLOWUP_MESSAGES) setChatLimitReached(true);
     } catch {
       setChatError("Couldn't reach the server. Please try again.");
     } finally {
+      clearTimeout(busyTimer);
+      setChatBusyRetrying(false);
       setChatSending(false);
+    }
+  }
+
+  async function handleCorrectionDecision(index: number, decision: "applied" | "dismissed") {
+    const entry = chatMessages[index];
+    if (entry.kind !== "correction" || entry.status !== "pending") return;
+
+    if (decision === "dismissed") {
+      setChatMessages((prev) => prev.map((m, i) => (i === index ? { ...m, status: "dismissed" } : m)));
+      return;
+    }
+    if (stage.name !== "done" || applyingCorrection) return;
+    setApplyingCorrection(true);
+    setChatError(null);
+    try {
+      const res = await fetch(`/api/bills/${stage.bill.id}/apply-correction`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ correction: entry.correction }),
+      });
+      const data: ApplyCorrectionResponse = await res.json();
+      if (!data.success) {
+        setChatError(data.message);
+        return;
+      }
+      setChatMessages((prev) => prev.map((m, i) => (i === index ? { ...m, status: "applied" } : m)));
+      // A new verdict/facts means the drafted email (if any) is now stale --
+      // clearing it lets the existing auto-draft effect redraft against the
+      // corrected numbers, the same way it does for a brand-new "done" stage.
+      setEmailDraft(null);
+      setEmailError(null);
+      setEmailActionTaken(null);
+      setTonePreset("");
+      draftRequestedRef.current = false;
+      setStage({ name: "done", bill: data.bill, checks: data.checks, verdict: data.verdict });
+    } catch {
+      setChatError("Couldn't reach the server. Please try again.");
+    } finally {
+      setApplyingCorrection(false);
     }
   }
 
@@ -849,28 +975,63 @@ export default function UploadPage() {
           <p className="text-sm text-ink-muted">Check this against your paper bill and fix anything that&apos;s wrong.</p>
 
           <div className="grid gap-3 sm:grid-cols-2">
-            <label className="flex flex-col gap-1 text-sm">
-              Provider
-              <input value={provider} onChange={(e) => setProvider(e.target.value)} className={inputClasses} />
+            <div className="flex flex-col gap-1 text-sm">
+              <span className="text-ink-muted">Provider</span>
+              {editingField === "provider" ? (
+                <input
+                  value={provider}
+                  onChange={(e) => setProvider(e.target.value)}
+                  onBlur={() => setEditingField(null)}
+                  autoFocus
+                  className={inputClasses}
+                />
+              ) : (
+                <div className="flex items-center gap-2">
+                  <span className="font-medium">{provider || "(not set)"}</span>
+                  <PencilButton label="Edit provider" onClick={() => setEditingField("provider")} />
+                </div>
+              )}
               {providerLegalName && <span className="text-xs text-ink-muted">Billing entity: {providerLegalName}</span>}
-            </label>
-            <label className="flex flex-col gap-1 text-sm">
-              Bill date (YYYY-MM-DD)
-              <input
-                value={billDate}
-                onChange={(e) => setBillDate(e.target.value)}
-                placeholder="YYYY-MM-DD"
-                className={inputClasses}
-              />
+            </div>
+            <div className="flex flex-col gap-1 text-sm">
+              <span className="text-ink-muted">Bill date</span>
+              {editingField === "billDate" ? (
+                <input
+                  value={billDate}
+                  onChange={(e) => setBillDate(e.target.value)}
+                  onBlur={() => setEditingField(null)}
+                  placeholder="YYYY-MM-DD"
+                  autoFocus
+                  className={inputClasses}
+                />
+              ) : (
+                <div className="flex items-center gap-2">
+                  <span className="font-medium">{billDate || "(not set)"}</span>
+                  <PencilButton label="Edit bill date" onClick={() => setEditingField("billDate")} />
+                </div>
+              )}
               {isSuspiciousBillDate(billDate) && (
                 <span className="text-xs text-amber">⚠ Check this date -- it looks off.</span>
               )}
-            </label>
+            </div>
           </div>
-          <label className="flex flex-col gap-1 text-sm">
-            Printed total
-            <input value={total} onChange={(e) => setTotal(e.target.value)} className={inputClasses} />
-          </label>
+          <div className="flex flex-col gap-1 text-sm">
+            <span className="text-ink-muted">Printed total</span>
+            {editingField === "total" ? (
+              <input
+                value={total}
+                onChange={(e) => setTotal(e.target.value)}
+                onBlur={() => setEditingField(null)}
+                autoFocus
+                className={inputClasses}
+              />
+            ) : (
+              <div className="flex items-center gap-2">
+                <span className="font-medium tabular-nums">{total || "(not set)"}</span>
+                <PencilButton label="Edit printed total" onClick={() => setEditingField("total")} />
+              </div>
+            )}
+          </div>
           {total.trim() !== "" && parsedTotalValue === null && (
             <p className="text-sm text-brick">Enter a valid number, e.g. 1234.56 or 1,234.56.</p>
           )}
@@ -879,6 +1040,25 @@ export default function UploadPage() {
             {lines.map((line, i) => {
               const amountInvalid = line.amount.trim() !== "" && parseAmountInput(line.amount) === null;
               const checkpoint = line.role === "subtotal" ? checkpointFor(livePreview, line.label) : undefined;
+              const isEditingLine = editingField === `line-${i}`;
+
+              if (!isEditingLine) {
+                return (
+                  <div key={i} className="flex items-center justify-between gap-2 py-3">
+                    <div className="flex flex-1 flex-wrap items-baseline gap-x-2">
+                      <span>{line.label || "(no label)"}</span>
+                      <span className="text-xs text-ink-muted">{ROLE_LABELS[line.role]}</span>
+                      {line.unrecognized && <span className="text-xs text-amber">unfamiliar</span>}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="tabular-nums">{line.amount}</span>
+                      {checkpoint && <CheckpointStamp checkpoint={checkpoint} onRemoveSuggestion={removeLineByLabelAmount} />}
+                      <PencilButton label={`Edit ${line.label || "line"}`} onClick={() => setEditingField(`line-${i}`)} />
+                    </div>
+                  </div>
+                );
+              }
+
               return (
                 <div key={i} className="flex flex-col gap-2 py-3 sm:flex-row sm:items-center">
                   <div className="flex flex-1 flex-col gap-1 sm:flex-row sm:items-center">
@@ -926,13 +1106,26 @@ export default function UploadPage() {
                   >
                     Delete
                   </button>
+                  <button type="button" onClick={() => setEditingField(null)} className={buttonSecondary}>
+                    Done
+                  </button>
                 </div>
               );
             })}
           </div>
-          <button type="button" onClick={addLine} className={`${buttonSecondary} self-start`}>
-            + Add line
-          </button>
+          {showAddLine ? (
+            <button type="button" onClick={addLine} className={`${buttonSecondary} self-start`}>
+              + Add line
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setShowAddLine(true)}
+              className="self-start text-sm text-ink-muted underline-offset-2 transition-colors hover:text-ink hover:underline"
+            >
+              Something missing?
+            </button>
+          )}
 
           <ChecksSummary checks={livePreview} total={parsedTotal} />
 
@@ -1134,19 +1327,60 @@ export default function UploadPage() {
 
           <div className={card}>
             <p className="mb-2 font-medium">Questions about this bill?</p>
-            {chatMessages.length > 0 && (
+            {chatMessages.length > 0 && stage.name === "done" && (
               <div className="mb-3 flex flex-col gap-2">
-                {chatMessages.map((m, i) => (
-                  <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
-                    <p
-                      className={`max-w-[85%] rounded-lg px-3 py-2 text-sm ${
-                        m.role === "user" ? "bg-ink text-paper" : "bg-line text-ink"
-                      }`}
-                    >
-                      {m.content}
+                {chatMessages.map((m, i) => {
+                  if (m.kind === "text") {
+                    return (
+                      <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
+                        <p
+                          className={`max-w-[85%] rounded-lg px-3 py-2 text-sm ${
+                            m.role === "user" ? "bg-ink text-paper" : "bg-line text-ink"
+                          }`}
+                        >
+                          {m.content}
+                        </p>
+                      </div>
+                    );
+                  }
+                  return (
+                    <div key={i} className="flex flex-col gap-2 rounded-lg border border-amber/40 bg-amber-soft p-3 text-sm">
+                      <p>{describeCorrection(m.correction, stage.bill)}</p>
+                      {m.correction.reason && <p className="text-xs text-ink-muted">{m.correction.reason}</p>}
+                      {m.status === "pending" ? (
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleCorrectionDecision(i, "applied")}
+                            disabled={applyingCorrection}
+                            className={buttonPrimary}
+                          >
+                            {applyingCorrection ? "Applying..." : "Apply"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleCorrectionDecision(i, "dismissed")}
+                            disabled={applyingCorrection}
+                            className={buttonSecondary}
+                          >
+                            Dismiss
+                          </button>
+                        </div>
+                      ) : (
+                        <p className="text-xs font-medium text-ink-muted">
+                          {m.status === "applied" ? "✓ Applied" : "Dismissed"}
+                        </p>
+                      )}
+                    </div>
+                  );
+                })}
+                {chatSending && (
+                  <div className="flex justify-start">
+                    <p className="max-w-[85%] rounded-lg bg-line px-3 py-2 text-sm text-ink-muted">
+                      {chatBusyRetrying ? "Busy -- retrying..." : "Thinking..."}
                     </p>
                   </div>
-                ))}
+                )}
               </div>
             )}
             {chatError && <p className="mb-2 text-sm text-brick">{chatError}</p>}

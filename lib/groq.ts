@@ -148,6 +148,7 @@ export async function answerFollowupQuestion(systemPrompt: string, history: Chat
       body: JSON.stringify({
         model: GROQ_MODEL,
         temperature: 0,
+        response_format: { type: "json_object" },
         messages: [{ role: "system", content: systemPrompt }, ...history],
       }),
     });
