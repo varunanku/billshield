@@ -11,6 +11,7 @@ import {
   type FollowupReply,
 } from "@/lib/followup";
 import { computeHistoryQuery } from "@/lib/history";
+import { computeEffectiveTaxRates, findMatchingRate, buildGstAddendum } from "@/lib/gst";
 import { answerFollowupQuestion as askGroq, type ChatResult } from "@/lib/groq";
 import { answerFollowupQuestion as askGemini } from "@/lib/gemini";
 import { USE_GROQ } from "@/lib/provider";
@@ -78,7 +79,7 @@ export async function POST(request: Request, routeContext: { params: Promise<{ i
     const { question, context } = validated.data;
 
     // RLS-scoped: this also confirms the bill belongs to the signed-in user.
-    const { data: bill, error: billError } = await supabase.from("bills").select("id").eq("id", billId).single();
+    const { data: bill, error: billError } = await supabase.from("bills").select("id, category").eq("id", billId).single();
     if (billError || !bill) {
       return json({ success: false, reason: "unauthorized", message: "That bill doesn't belong to you." }, 401);
     }
@@ -114,7 +115,24 @@ export async function POST(request: Request, routeContext: { params: Promise<{ i
     }));
     history.push({ role: "user", content: question });
 
-    const systemPrompt = buildFollowupSystemPrompt(context);
+    // GST reference (Phase 4): the rate(s) this bill's own tax lines work
+    // out to, computed in code, plus any matching seeded reference rate --
+    // never the model's own say-so on what the rate should be.
+    const effectiveTaxRates = computeEffectiveTaxRates(
+      context.lineItems.map((li) => ({ label: li.label, amount: li.amount, role: li.role }))
+    );
+    let gstAddendum = "";
+    if (effectiveTaxRates.length > 0) {
+      const { data: rateRows } = await supabase.from("category_rates").select("*").eq("category", bill.category ?? "");
+      const matchingRate = findMatchingRate(
+        rateRows ?? [],
+        bill.category,
+        context.lineItems.map((li) => li.label)
+      );
+      gstAddendum = buildGstAddendum(effectiveTaxRates, matchingRate);
+    }
+
+    const systemPrompt = buildFollowupSystemPrompt(context) + gstAddendum;
     const result = await answerFollowupQuestion(systemPrompt, history);
 
     if (!result.ok && result.kind === "rate_limited") {
