@@ -15,6 +15,7 @@ import {
   type Checkpoint,
 } from "@/lib/bill-checks";
 import type { Verdict } from "@/lib/verdict";
+import { MAX_FOLLOWUP_MESSAGES, type FollowupBillContext } from "@/lib/followup";
 
 type ExtractedBill = {
   provider: string | null;
@@ -272,6 +273,15 @@ export default function UploadPage() {
   // the UI shows, is derived below instead of its own setState-in-effect).
   const draftRequestedRef = useRef(false);
 
+  // Follow-up chat, shown under the verdict. Local-only state: each turn is
+  // also persisted server-side (messages, type=followup) by the route, but
+  // the thread displayed here is just what's accumulated this session.
+  const [chatMessages, setChatMessages] = useState<{ role: "user" | "assistant"; content: string }[]>([]);
+  const [chatInput, setChatInput] = useState("");
+  const [chatSending, setChatSending] = useState(false);
+  const [chatError, setChatError] = useState<string | null>(null);
+  const [chatLimitReached, setChatLimitReached] = useState(false);
+
   // Counts down a rate-limited retry wait so "Try again" has something
   // honest to show instead of a static message. The target end time lives
   // in a ref (a plain mutation, not setState); `tick` is a dummy counter
@@ -437,6 +447,10 @@ export default function UploadPage() {
       setEmailError(null);
       setEmailActionTaken(null);
       draftRequestedRef.current = false;
+      setChatMessages([]);
+      setChatInput("");
+      setChatError(null);
+      setChatLimitReached(false);
       setIsConfirming(false);
       setStage({ name: "done", bill: data.bill, checks: data.checks, verdict: data.verdict });
     } catch {
@@ -472,6 +486,10 @@ export default function UploadPage() {
     setEmailActionTaken(null);
     setIsConfirming(false);
     draftRequestedRef.current = false;
+    setChatMessages([]);
+    setChatInput("");
+    setChatError(null);
+    setChatLimitReached(false);
     setStage({ name: "upload" });
   }
 
@@ -579,6 +597,56 @@ export default function UploadPage() {
     } catch {
       // Best-effort -- the user has already sent the email either way;
       // failing to log that here isn't worth blocking them over.
+    }
+  }
+
+  // Built fresh from whatever's currently in `stage` -- bill/checks/verdict
+  // were already fully computed server-side at confirm time, and have just
+  // lived in this state since (same pattern as draft-email's `facts`).
+  function buildFollowupContext(bill: ConfirmedBill, checks: BillChecks, verdict: Verdict): FollowupBillContext {
+    const facts = "facts" in verdict ? verdict.facts : null;
+    return {
+      provider: bill.provider,
+      billDate: bill.billDate,
+      total: bill.total,
+      lineItems: bill.lineItems.map((li) => ({ label: li.label, amount: li.amount, role: li.role })),
+      verdictOutcome: verdict.outcome,
+      verdictGap: facts ? facts.gap : null,
+      disputedLines: facts ? facts.disputedLines : [],
+      warnings: checks.warnings.map((w) => w.message),
+    };
+  }
+
+  async function handleAskQuestion() {
+    if (stage.name !== "done") return;
+    const question = chatInput.trim();
+    if (!question || chatSending || chatLimitReached) return;
+
+    setChatInput("");
+    setChatError(null);
+    setChatSending(true);
+    setChatMessages((prev) => [...prev, { role: "user", content: question }]);
+
+    try {
+      const res = await fetch(`/api/bills/${stage.bill.id}/followup`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question, context: buildFollowupContext(stage.bill, stage.checks, stage.verdict) }),
+      });
+      const data: { success: true; answer: string; messagesUsed: number } | { success: false; reason: string; message: string } =
+        await res.json();
+
+      if (!data.success) {
+        setChatError(data.message);
+        if (data.reason === "rate_limited" && res.status === 429) setChatLimitReached(true);
+        return;
+      }
+      setChatMessages((prev) => [...prev, { role: "assistant", content: data.answer }]);
+      if (data.messagesUsed >= MAX_FOLLOWUP_MESSAGES) setChatLimitReached(true);
+    } catch {
+      setChatError("Couldn't reach the server. Please try again.");
+    } finally {
+      setChatSending(false);
     }
   }
 
@@ -920,6 +988,53 @@ export default function UploadPage() {
               )}
             </div>
           )}
+
+          <div className={card}>
+            <p className="mb-2 font-medium">Questions about this bill?</p>
+            {chatMessages.length > 0 && (
+              <div className="mb-3 flex flex-col gap-2">
+                {chatMessages.map((m, i) => (
+                  <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
+                    <p
+                      className={`max-w-[85%] rounded-lg px-3 py-2 text-sm ${
+                        m.role === "user" ? "bg-ink text-paper" : "bg-line text-ink"
+                      }`}
+                    >
+                      {m.content}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            )}
+            {chatError && <p className="mb-2 text-sm text-brick">{chatError}</p>}
+            {chatLimitReached ? (
+              <p className="text-sm text-ink-muted">You&apos;ve reached the {MAX_FOLLOWUP_MESSAGES}-question limit for this bill.</p>
+            ) : (
+              <div className="flex gap-2">
+                <input
+                  value={chatInput}
+                  onChange={(e) => setChatInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      handleAskQuestion();
+                    }
+                  }}
+                  placeholder="Ask about a line on this bill..."
+                  disabled={chatSending}
+                  className={`${inputClasses} flex-1`}
+                />
+                <button
+                  type="button"
+                  onClick={handleAskQuestion}
+                  disabled={chatSending || !chatInput.trim()}
+                  className={buttonSecondary}
+                >
+                  {chatSending ? "..." : "Ask"}
+                </button>
+              </div>
+            )}
+          </div>
 
           <button onClick={startOver} className={`${buttonSecondary} self-start`}>
             Upload another bill

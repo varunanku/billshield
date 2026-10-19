@@ -4,7 +4,14 @@
 import "server-only";
 
 import { LINE_ROLES } from "./bill-checks.ts";
-import { EXTRACTION_PROMPT, type ExtractedBill, type GroqExtractResult, type ImageInput } from "./groq.ts";
+import {
+  EXTRACTION_PROMPT,
+  type ChatResult,
+  type ChatTurn,
+  type ExtractedBill,
+  type GroqExtractResult,
+  type ImageInput,
+} from "./groq.ts";
 import { parseGeminiResponse } from "./gemini-parse.ts";
 
 // Gemini's inline PDF support means a PDF goes straight through as a part,
@@ -88,6 +95,60 @@ export async function extractBillFromImages(images: ImageInput[]): Promise<GroqE
 
   const json = await res.json().catch(() => null);
   return parseGeminiResponse(json);
+}
+
+// Text-only chat, same model as extraction, for the post-verdict follow-up
+// Q&A. Gemini has no "assistant" role -- history turns map to "model".
+export async function answerFollowupQuestion(systemPrompt: string, history: ChatTurn[]): Promise<ChatResult> {
+  const model = process.env.GEMINI_MODEL;
+  if (!model) {
+    return { ok: false, kind: "failed", detail: "GEMINI_MODEL is not set" };
+  }
+
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+  const contents = history.map((turn) => ({
+    role: turn.role === "assistant" ? "model" : "user",
+    parts: [{ text: turn.content }],
+  }));
+
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "x-goog-api-key": process.env.GEMINI_API_KEY ?? "",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: systemPrompt }] },
+        contents,
+        generationConfig: { temperature: 0 },
+      }),
+    });
+  } catch (e) {
+    return { ok: false, kind: "failed", detail: `network error: ${String(e)}` };
+  }
+
+  if (res.status === 429) {
+    const retryAfterHeader = res.headers.get("retry-after");
+    return {
+      ok: false,
+      kind: "rate_limited",
+      retryAfterSeconds: retryAfterHeader ? Number(retryAfterHeader) : null,
+    };
+  }
+
+  if (!res.ok) {
+    const detail = await res.text().catch(() => res.statusText);
+    return { ok: false, kind: "failed", detail };
+  }
+
+  const json = await res.json().catch(() => null);
+  const text = json?.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (typeof text !== "string") {
+    return { ok: false, kind: "failed", detail: "no content in Gemini response" };
+  }
+  return { ok: true, text };
 }
 
 export type { ExtractedBill };

@@ -114,6 +114,56 @@ Rules:
 - Your only job for each line is to transcribe its printed label and amount and classify its role. Do not add up, multiply, net out, or otherwise calculate anything yourself.
 - Do not invent a category, tax rate, or support contact.`;
 
+export type ChatTurn = { role: "user" | "assistant"; content: string };
+
+export type ChatResult =
+  | { ok: true; text: string }
+  | { ok: false; kind: "rate_limited"; retryAfterSeconds: number | null }
+  | { ok: false; kind: "failed"; detail: string };
+
+// Text-only chat completion, same model/endpoint as extraction, for the
+// post-verdict follow-up Q&A -- no images involved here.
+export async function answerFollowupQuestion(systemPrompt: string, history: ChatTurn[]): Promise<ChatResult> {
+  let res: Response;
+  try {
+    res = await fetch(GROQ_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: GROQ_MODEL,
+        temperature: 0,
+        messages: [{ role: "system", content: systemPrompt }, ...history],
+      }),
+    });
+  } catch (e) {
+    return { ok: false, kind: "failed", detail: `network error: ${String(e)}` };
+  }
+
+  if (res.status === 429) {
+    const retryAfterHeader = res.headers.get("retry-after");
+    return {
+      ok: false,
+      kind: "rate_limited",
+      retryAfterSeconds: retryAfterHeader ? Number(retryAfterHeader) : null,
+    };
+  }
+
+  if (!res.ok) {
+    const detail = await res.text().catch(() => res.statusText);
+    return { ok: false, kind: "failed", detail };
+  }
+
+  const json = await res.json().catch(() => null);
+  const text = json?.choices?.[0]?.message?.content;
+  if (typeof text !== "string") {
+    return { ok: false, kind: "failed", detail: "no content in Groq response" };
+  }
+  return { ok: true, text };
+}
+
 export type ImageInput = { bytes: Buffer; mimeType: string };
 
 type ContentPart = { type: "text"; text: string } | { type: "image_url"; image_url: { url: string } };

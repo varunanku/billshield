@@ -5,11 +5,10 @@ import { isValidOwnedPath } from "@/lib/storage-paths";
 import { pdfToPngImages } from "@/lib/pdf-to-images";
 import { extractBillFromImages as extractWithGroq, type ExtractedBill, type ImageInput } from "@/lib/groq";
 import { extractBillFromImages as extractWithGemini } from "@/lib/gemini";
+import { USE_GROQ } from "@/lib/provider";
 
 // Gemini accepts PDF bytes directly (no rasterizing, no page cap), so only
-// the Groq path needs pdfToPngImages. Default to Gemini; set
-// EXTRACTION_PROVIDER=groq to use the original path instead.
-const USE_GROQ = process.env.EXTRACTION_PROVIDER === "groq";
+// the Groq path needs pdfToPngImages.
 const extractBillFromImages = USE_GROQ ? extractWithGroq : extractWithGemini;
 
 export const maxDuration = 60; // vision call + PDF rendering can take a few seconds; lower this if your Vercel plan caps it.
