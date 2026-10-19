@@ -12,7 +12,13 @@ const MAX_PDF_PAGES = 3;
 
 type ApiResponse =
   | { success: true; extraction: ExtractedBill; notice: string | null; path: string }
-  | { success: false; reason: "bad_request" | "unauthorized" | "rate_limited" | "server_error"; message: string; notice?: string };
+  | {
+      success: false;
+      reason: "bad_request" | "unauthorized" | "rate_limited" | "server_error";
+      message: string;
+      notice?: string;
+      retryAfterSeconds?: number;
+    };
 
 function json(body: ApiResponse, status: number) {
   return NextResponse.json(body, { status });
@@ -122,6 +128,7 @@ export async function POST(request: Request) {
           ? `We're getting a lot of requests right now. Please wait about ${Math.ceil(wait)}s and try again.`
           : "We're getting a lot of requests right now. Please wait a few seconds and try again.",
         notice: notice ?? undefined,
+        retryAfterSeconds: wait ? Math.ceil(wait) : undefined,
       },
       429
     );

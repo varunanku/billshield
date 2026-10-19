@@ -41,40 +41,78 @@ export default function LoginPage() {
     setMessage("Account created. Check your email to confirm, then sign in.");
   }
 
+  const inputClasses =
+    "w-full min-h-11 rounded-md border border-line bg-card px-3 py-2 text-ink placeholder:text-ink-muted outline-none transition-colors focus-visible:ring-2 focus-visible:ring-emerald focus-visible:border-emerald";
+
   return (
-    <main style={{ maxWidth: 360, margin: "4rem auto", padding: "0 1rem" }}>
-      <h1>BillShield</h1>
-      <p>Sign in or create an account.</p>
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          handleSignIn();
-        }}
-        style={{ display: "flex", flexDirection: "column", gap: 8 }}
-      >
-        <input
-          type="email"
-          placeholder="Email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          required
-        />
-        <input
-          type="password"
-          placeholder="Password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          required
-          minLength={6}
-        />
-        <button type="submit" disabled={loading}>
-          Sign in
-        </button>
-        <button type="button" onClick={handleSignUp} disabled={loading}>
-          Create account
-        </button>
-      </form>
-      {message && <p role="status">{message}</p>}
+    <main className="flex min-h-dvh flex-col items-center justify-center px-4 py-12">
+      <div className="w-full max-w-sm">
+        <div className="mb-8 flex flex-col items-center text-center gap-2">
+          <svg viewBox="0 0 32 32" fill="none" className="h-10 w-10" aria-hidden>
+            <path d="M16 2.5 L28 7 V15.5 C28 23 22.5 27.5 16 29.5 C9.5 27.5 4 23 4 15.5 V7 Z" className="fill-emerald" />
+            <path
+              d="M11 16.2 L14.3 19.5 L21.2 11.8"
+              stroke="var(--paper)"
+              strokeWidth="2.4"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              fill="none"
+            />
+          </svg>
+          <h1 className="font-serif text-3xl">BillShield</h1>
+          <p className="text-ink-muted">Check your bill before you pay it.</p>
+        </div>
+
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            handleSignIn();
+          }}
+          className="flex flex-col gap-3 rounded-xl border border-line bg-card p-6 shadow-sm"
+        >
+          <label className="flex flex-col gap-1 text-sm">
+            Email
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+              className={inputClasses}
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-sm">
+            Password
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+              minLength={6}
+              className={inputClasses}
+            />
+          </label>
+          <button
+            type="submit"
+            disabled={loading}
+            className="min-h-11 rounded-md bg-emerald px-4 py-2 font-medium text-paper transition-colors hover:opacity-90 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald focus-visible:ring-offset-2 focus-visible:ring-offset-card"
+          >
+            Sign in
+          </button>
+          <button
+            type="button"
+            onClick={handleSignUp}
+            disabled={loading}
+            className="min-h-11 rounded-md border border-line px-4 py-2 font-medium transition-colors hover:bg-paper disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald"
+          >
+            Create account
+          </button>
+        </form>
+        {message && (
+          <p role="status" className="mt-3 text-center text-sm text-ink-muted">
+            {message}
+          </p>
+        )}
+      </div>
     </main>
   );
 }

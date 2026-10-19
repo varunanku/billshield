@@ -1,26 +1,95 @@
 @import "tailwindcss";
 
+/* "Verified receipt": warm paper, near-black ink, exactly one accent per
+   meaning. Emerald = verified/clean. Amber = check this. Brick = confirmed
+   error (verdict screen only -- never used for routine warnings). Full dark
+   mode via prefers-color-scheme, same accent roles, lightened for contrast
+   on a dark ground. */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
+  --paper: #faf7f2;
+  --card: #ffffff;
+  --ink: #1a1816;
+  --ink-muted: #6b6560;
+  --line: #e4ddd2;
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --emerald: #0f766e;
+  --emerald-soft: #0f766e1a;
+  --amber: #8a5a0a;
+  --amber-soft: #8a5a0a1a;
+  --brick: #9f3225;
+  --brick-soft: #9f32251a;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --paper: #1c1a17;
+    --card: #242220;
+    --ink: #f0ece4;
+    --ink-muted: #a8a19a;
+    --line: #3a3630;
+
+    --emerald: #2dd4bf;
+    --emerald-soft: #2dd4bf26;
+    --amber: #e3a542;
+    --amber-soft: #e3a54226;
+    --brick: #e2695c;
+    --brick-soft: #e2695c26;
   }
 }
 
+@theme inline {
+  --color-paper: var(--paper);
+  --color-card: var(--card);
+  --color-ink: var(--ink);
+  --color-ink-muted: var(--ink-muted);
+  --color-line: var(--line);
+  --color-emerald: var(--emerald);
+  --color-emerald-soft: var(--emerald-soft);
+  --color-amber: var(--amber);
+  --color-amber-soft: var(--amber-soft);
+  --color-brick: var(--brick);
+  --color-brick-soft: var(--brick-soft);
+  --font-sans: var(--font-geist-sans);
+  --font-serif: var(--font-fraunces);
+}
+
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--paper);
+  color: var(--ink);
+}
+
+/* Receipt card: a subtle perforated edge, top and bottom, like a torn
+   ticket stub. Tailwind has no primitive for this -- a small repeating
+   radial-gradient cutout is the standard CSS trick. */
+.receipt-edge {
+  position: relative;
+}
+.receipt-edge::before,
+.receipt-edge::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 10px;
+  background-image: radial-gradient(circle at 10px 0, transparent 9px, var(--paper) 9.5px);
+  background-size: 20px 20px;
+  background-repeat: repeat-x;
+  pointer-events: none;
+}
+.receipt-edge::before {
+  top: -1px;
+}
+.receipt-edge::after {
+  bottom: -1px;
+  transform: scaleY(-1);
+}
+
+/* Dotted leader between a line's label and its amount, like a table of
+   contents -- an in-between flex element with a dotted bottom border. */
+.leader {
+  flex: 1 1 auto;
+  border-bottom: 1px dotted var(--line);
+  margin: 0 0.5rem;
+  transform: translateY(-0.35em);
+  min-width: 0.75rem;
 }
