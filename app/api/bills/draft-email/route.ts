@@ -1,12 +1,12 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { draftEmail, type Tone } from "@/lib/email-draft";
+import { draftEmail, TONE_PRESETS, type Tone, type TonePreset } from "@/lib/email-draft";
 import type { Facts } from "@/lib/verdict";
 
 export const maxDuration = 30;
 
 type ApiResponse =
-  | { success: true; messageId: string; subject: string; body: string }
+  | { success: true; messageId: string; subject: string; body: string; isDefaultTone: boolean }
   | { success: false; reason: "bad_request" | "unauthorized" | "server_error"; message: string };
 
 function json(body: ApiResponse, status: number) {
@@ -38,8 +38,9 @@ export async function POST(request: Request) {
   if (!validated.ok) {
     return json({ success: false, reason: "bad_request", message: validated.message }, 400);
   }
-  const { billId, outcome, facts } = validated.data;
+  const { billId, outcome, facts, tonePreset } = validated.data;
   const tone: Tone = outcome === "confirmed_error" ? "confident" : "inquiry";
+  const isDefaultTone = tonePreset === null;
 
   // RLS-scoped: this also confirms the bill belongs to the signed-in user.
   const { data: bill, error: billError } = await supabase
@@ -51,7 +52,20 @@ export async function POST(request: Request) {
     return json({ success: false, reason: "unauthorized", message: "That bill doesn't belong to you." }, 401);
   }
 
-  const draft = await draftEmail(facts, tone);
+  const draft = await draftEmail(facts, tone, tonePreset);
+
+  // Each Regenerate click is a new row (the proof chain keeps every
+  // version, and "I've sent it" marks which one went out), versioned per
+  // bill rather than overwritten.
+  const { data: latest } = await supabase
+    .from("messages")
+    .select("version")
+    .eq("bill_id", billId)
+    .eq("type", "dispute")
+    .order("version", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const version = (latest?.version ?? 0) + 1;
 
   // Proof chain: link the one line this disputes, only when there's
   // exactly one disputed line and it matches a stored row unambiguously.
@@ -85,6 +99,9 @@ export async function POST(request: Request) {
       subject: draft.subject,
       body: draft.body,
       tone,
+      tone_preset_used: tonePreset,
+      version,
+      is_default_tone: isDefaultTone,
     })
     .select()
     .single();
@@ -94,12 +111,14 @@ export async function POST(request: Request) {
     return json({ success: false, reason: "server_error", message: "Couldn't save the draft. Please try again." }, 500);
   }
 
-  return json({ success: true, messageId: message.id, subject: draft.subject, body: draft.body }, 200);
+  return json({ success: true, messageId: message.id, subject: draft.subject, body: draft.body, isDefaultTone }, 200);
 }
 
 function validatePayload(
   value: unknown
-): { ok: true; data: { billId: string; outcome: "confirmed_error" | "unexplained"; facts: Facts } } | { ok: false; message: string } {
+):
+  | { ok: true; data: { billId: string; outcome: "confirmed_error" | "unexplained"; facts: Facts; tonePreset: TonePreset | null } }
+  | { ok: false; message: string } {
   if (typeof value !== "object" || value === null) return { ok: false, message: "Request body was missing." };
   const v = value as Record<string, unknown>;
 
@@ -108,6 +127,8 @@ function validatePayload(
 
   const outcome = v.outcome === "confirmed_error" || v.outcome === "unexplained" ? v.outcome : null;
   if (!outcome) return { ok: false, message: "Invalid outcome." };
+
+  const tonePreset = TONE_PRESETS.includes(v.tonePreset as TonePreset) ? (v.tonePreset as TonePreset) : null;
 
   if (typeof v.facts !== "object" || v.facts === null) return { ok: false, message: "Missing facts." };
   const f = v.facts as Record<string, unknown>;
@@ -140,6 +161,7 @@ function validatePayload(
       billId,
       outcome,
       facts: { provider, billDate, billReference: null, disputedLines, gap, promisedAmount, billedAmount, total },
+      tonePreset,
     },
   };
 }

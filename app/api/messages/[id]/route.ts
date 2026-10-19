@@ -34,8 +34,14 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
   }
   const finalBody = typeof body.final_body === "string" ? body.final_body : undefined;
 
-  const updates: Record<string, string> = { action_taken: actionTaken };
-  if (finalBody !== undefined) updates.final_body = finalBody;
+  const updates: Record<string, string | boolean> = { action_taken: actionTaken };
+  if (finalBody !== undefined) {
+    updates.final_body = finalBody;
+    // Derived here, not trusted from the client -- edited_before_send
+    // compares the actually-sent text against the stored generated body.
+    const { data: current } = await supabase.from("messages").select("body").eq("id", id).single();
+    updates.edited_before_send = current ? finalBody !== current.body : false;
+  }
 
   const { error } = await supabase.from("messages").update(updates).eq("id", id);
   if (error) {

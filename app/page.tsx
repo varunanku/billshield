@@ -16,6 +16,7 @@ import {
 } from "@/lib/bill-checks";
 import type { Verdict } from "@/lib/verdict";
 import { MAX_FOLLOWUP_MESSAGES, type FollowupBillContext } from "@/lib/followup";
+import type { TonePreset } from "@/lib/email-draft";
 
 type ExtractedBill = {
   provider: string | null;
@@ -41,8 +42,17 @@ type ConfirmResponse =
   | { success: false; reason: string; message: string };
 
 type DraftEmailResponse =
-  | { success: true; messageId: string; subject: string; body: string }
+  | { success: true; messageId: string; subject: string; body: string; isDefaultTone: boolean }
   | { success: false; reason: string; message: string };
+
+const TONE_PRESET_OPTIONS: { value: TonePreset; label: string }[] = [
+  { value: "polite", label: "Polite" },
+  { value: "firm", label: "Firm" },
+  { value: "formal", label: "Formal" },
+  { value: "brief", label: "Brief" },
+  { value: "friendly", label: "Friendly" },
+  { value: "escalation", label: "Escalation" },
+];
 
 type EditableLine = { label: string; amount: string; role: LineRole; unrecognized?: boolean };
 
@@ -264,10 +274,15 @@ export default function UploadPage() {
   // originalBody is kept alongside the editable body so "I've sent it" can
   // tell whether the user changed it (sent_manually_edited vs sent_as_is).
   const [emailDraft, setEmailDraft] = useState<
-    { messageId: string; subject: string; body: string; originalBody: string } | null
+    { messageId: string; subject: string; body: string; originalBody: string; isDefaultTone: boolean } | null
   >(null);
   const [emailError, setEmailError] = useState<string | null>(null);
   const [emailActionTaken, setEmailActionTaken] = useState<string | null>(null);
+  // The dropdown's current selection -- "" means no preset chosen (the
+  // default/original wording). Regenerate always reflects whatever's
+  // selected here, including "" (re-roll the default tone again).
+  const [tonePreset, setTonePreset] = useState<TonePreset | "">("");
+  const [regenerating, setRegenerating] = useState(false);
   // A ref, not state: it only guards the effect below against firing the
   // same fetch twice, it's never read for rendering (draftingEmail, what
   // the UI shows, is derived below instead of its own setState-in-effect).
@@ -446,6 +461,7 @@ export default function UploadPage() {
       setEmailDraft(null);
       setEmailError(null);
       setEmailActionTaken(null);
+      setTonePreset("");
       draftRequestedRef.current = false;
       setChatMessages([]);
       setChatInput("");
@@ -484,6 +500,7 @@ export default function UploadPage() {
     setEmailDraft(null);
     setEmailError(null);
     setEmailActionTaken(null);
+    setTonePreset("");
     setIsConfirming(false);
     draftRequestedRef.current = false;
     setChatMessages([]);
@@ -561,7 +578,13 @@ export default function UploadPage() {
           setEmailError(data.message);
           return;
         }
-        setEmailDraft({ messageId: data.messageId, subject: data.subject, body: data.body, originalBody: data.body });
+        setEmailDraft({
+          messageId: data.messageId,
+          subject: data.subject,
+          body: data.body,
+          originalBody: data.body,
+          isDefaultTone: data.isDefaultTone,
+        });
       })
       .catch(() => setEmailError("Couldn't reach the server to draft the email."));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -583,20 +606,58 @@ export default function UploadPage() {
   async function handleMarkSent() {
     if (!emailDraft) return;
     const edited = emailDraft.body !== emailDraft.originalBody;
+    const actionTaken = edited ? "sent_manually_edited" : emailDraft.isDefaultTone ? "sent_as_is" : "sent_with_tone_preset";
     try {
       const res = await fetch(`/api/messages/${emailDraft.messageId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action_taken: edited ? "sent_manually_edited" : "sent_as_is",
-          final_body: edited ? emailDraft.body : undefined,
-        }),
+        // final_body is always sent (not just when edited) so the server
+        // can derive edited_before_send itself, from the actual text, rather
+        // than trusting a client-computed boolean.
+        body: JSON.stringify({ action_taken: actionTaken, final_body: emailDraft.body }),
       });
       const data = await res.json();
-      if (data.success) setEmailActionTaken(edited ? "sent_manually_edited" : "sent_as_is");
+      if (data.success) setEmailActionTaken(actionTaken);
     } catch {
       // Best-effort -- the user has already sent the email either way;
       // failing to log that here isn't worth blocking them over.
+    }
+  }
+
+  async function handleRegenerate() {
+    if (stage.name !== "done") return;
+    if (stage.verdict.outcome !== "confirmed_error" && stage.verdict.outcome !== "unexplained") return;
+    if (regenerating) return;
+    setRegenerating(true);
+    setEmailError(null);
+    try {
+      const res = await fetch("/api/bills/draft-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          billId: stage.bill.id,
+          outcome: stage.verdict.outcome,
+          facts: stage.verdict.facts,
+          tonePreset: tonePreset || null,
+        }),
+      });
+      const data: DraftEmailResponse = await res.json();
+      if (!data.success) {
+        setEmailError(data.message);
+        return;
+      }
+      setEmailDraft({
+        messageId: data.messageId,
+        subject: data.subject,
+        body: data.body,
+        originalBody: data.body,
+        isDefaultTone: data.isDefaultTone,
+      });
+      setEmailActionTaken(null); // a new row -- not sent yet
+    } catch {
+      setEmailError("Couldn't reach the server to regenerate the email.");
+    } finally {
+      setRegenerating(false);
     }
   }
 
@@ -982,6 +1043,27 @@ export default function UploadPage() {
                     </a>
                     <button type="button" onClick={handleMarkSent} disabled={emailActionTaken !== null} className={buttonPrimary}>
                       {emailActionTaken ? "Marked as sent" : "I've sent it"}
+                    </button>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2 border-t border-line pt-3">
+                    <label className="flex items-center gap-2 text-sm">
+                      Tone
+                      <select
+                        value={tonePreset}
+                        onChange={(e) => setTonePreset(e.target.value as TonePreset | "")}
+                        className={inputClasses}
+                      >
+                        <option value="">Default</option>
+                        {TONE_PRESET_OPTIONS.map((opt) => (
+                          <option key={opt.value} value={opt.value}>
+                            {opt.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <button type="button" onClick={handleRegenerate} disabled={regenerating} className={buttonSecondary}>
+                      {regenerating ? "Regenerating..." : "Regenerate"}
                     </button>
                   </div>
                 </div>

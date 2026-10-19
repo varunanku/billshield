@@ -11,6 +11,22 @@ const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
 export type Tone = "confident" | "inquiry";
 export type EmailDraft = { subject: string; body: string };
 
+// A secondary style knob, layered on top of the confident/inquiry stance
+// (which still decides accusing-vs-asking). Picked from the review
+// screen's dropdown; null means the original, unstyled draft.
+export const TONE_PRESETS = ["polite", "firm", "formal", "brief", "friendly", "escalation"] as const;
+export type TonePreset = (typeof TONE_PRESETS)[number];
+
+const PRESET_INSTRUCTIONS: Record<TonePreset, string> = {
+  polite: "Extra polite and courteous -- soften the language throughout.",
+  firm: "Firm and assertive without being rude -- make clear this needs a prompt resolution.",
+  formal: "Formal business-letter register -- no contractions, no casual phrasing.",
+  brief: "As brief as possible -- a few sentences only, minimal pleasantries.",
+  friendly: "Warm and friendly, conversational but still professional.",
+  escalation:
+    "Firmer still, and note that you will escalate this to a formal complaint or the relevant ombudsman/regulator if it isn't resolved promptly.",
+};
+
 // Every money figure the email is allowed to state, derived from facts
 // alone -- nothing here was ever at the LLM's discretion.
 function factNumbers(facts: Facts): number[] {
@@ -63,7 +79,10 @@ function passesNumberGuard(draft: EmailDraft, facts: Facts): boolean {
   return allNumbersAreFacts(draft, facts) && totalClaimsAreCorrect(draft, facts);
 }
 
-function buildPrompt(facts: Facts, tone: Tone): string {
+// Exported so a test can assert the fact numbers it carries don't change
+// across tone presets -- the same guarantee passesNumberGuard enforces on
+// the model's actual output, checked one layer earlier, without a network call.
+export function buildPrompt(facts: Facts, tone: Tone, preset: TonePreset | null): string {
   const lineText =
     facts.disputedLines.length > 0
       ? facts.disputedLines.map((l) => `- ${l.label}: Rs ${l.amount.toFixed(2)}`).join("\n")
@@ -84,11 +103,11 @@ Tone: ${
       ? "Confident and direct. State the issue plainly and ask for a correction or a refund."
       : "Soft and inquiry-based. Ask the provider to confirm or clarify -- do not accuse them of an error."
   }
-
+${preset ? `\nAdditional style instruction: ${PRESET_INSTRUCTIONS[preset]}\n` : ""}
 Return ONLY a JSON object of this exact shape, no other text: {"subject": string, "body": string}.`;
 }
 
-async function callModel(facts: Facts, tone: Tone): Promise<EmailDraft | null> {
+async function callModel(facts: Facts, tone: Tone, preset: TonePreset | null): Promise<EmailDraft | null> {
   try {
     const res = await fetch(GROQ_URL, {
       method: "POST",
@@ -100,7 +119,7 @@ async function callModel(facts: Facts, tone: Tone): Promise<EmailDraft | null> {
         model: EMAIL_MODEL,
         temperature: 0.3,
         response_format: { type: "json_object" },
-        messages: [{ role: "user", content: buildPrompt(facts, tone) }],
+        messages: [{ role: "user", content: buildPrompt(facts, tone, preset) }],
       }),
     });
     if (!res.ok) return null;
@@ -156,10 +175,14 @@ Thank you,
   };
 }
 
-export async function draftEmail(facts: Facts, tone: Tone): Promise<EmailDraft> {
-  let draft = await callModel(facts, tone);
+// preset is a pure wording knob -- passesNumberGuard runs exactly the same
+// regardless, since facts (the only source of any number) never changes.
+// The template fallback ignores preset: it's a fixed-wording, code-only
+// safety net for when the model fails the guard twice, not styled output.
+export async function draftEmail(facts: Facts, tone: Tone, preset: TonePreset | null = null): Promise<EmailDraft> {
+  let draft = await callModel(facts, tone, preset);
   if (draft && !passesNumberGuard(draft, facts)) {
-    draft = await callModel(facts, tone); // one regeneration attempt
+    draft = await callModel(facts, tone, preset); // one regeneration attempt
   }
   if (!draft || !passesNumberGuard(draft, facts)) {
     return templateEmail(facts, tone);
