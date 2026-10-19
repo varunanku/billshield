@@ -16,7 +16,11 @@ export const LINE_ROLES: LineRole[] = [
   "opening",
 ];
 
-export type BillLine = { label: string; amount: number; role: LineRole };
+// unrecognized is set from the review screen's "I don't recognise this"
+// mark -- it never affects any sum/checkpoint/warning (those are about
+// whether the maths is right, which is unrelated to whether the user
+// recognizes a legitimate-looking charge), only the verdict (lib/verdict.ts).
+export type BillLine = { label: string; amount: number; role: LineRole; unrecognized?: boolean };
 
 export type CheckpointSuggestion = { label: string; amount: number };
 
@@ -66,7 +70,7 @@ export type BillChecks = {
 export const EPSILON = 0.01; // floating-point rounding only, not a business tolerance
 export const ROUNDING_TOLERANCE = 1.0; // statement reconciliation (opening balance + period activity) tolerates up to this before it's flagged as a real issue
 
-export type PersistedLine = { label: string; amount: number; role: LineRole };
+export type PersistedLine = { label: string; amount: number; role: LineRole; unrecognized: boolean };
 
 // line_items has no role column, so storage has to encode role into label +
 // amount alone, in a way a later reader (e.g. verdict logic) can recover
@@ -92,6 +96,7 @@ export function toPersistedLines(lineItems: BillLine[]): PersistedLine[] {
       label: li.role === "payment" ? "Amount Paid" : li.label,
       amount: li.role === "discount" ? -li.amount : li.amount,
       role: li.role,
+      unrecognized: li.unrecognized ?? false,
     }));
 }
 

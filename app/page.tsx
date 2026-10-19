@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import {
@@ -13,6 +13,7 @@ import {
   type LineRole,
   type BillChecks,
 } from "@/lib/bill-checks";
+import type { Verdict } from "@/lib/verdict";
 
 type ExtractedBill = {
   provider: string | null;
@@ -34,10 +35,14 @@ type ConfirmedBill = {
 };
 
 type ConfirmResponse =
-  | { success: true; bill: ConfirmedBill; checks: BillChecks }
+  | { success: true; bill: ConfirmedBill; checks: BillChecks; verdict: Verdict }
   | { success: false; reason: string; message: string };
 
-type EditableLine = { label: string; amount: string; role: LineRole };
+type DraftEmailResponse =
+  | { success: true; messageId: string; subject: string; body: string }
+  | { success: false; reason: string; message: string };
+
+type EditableLine = { label: string; amount: string; role: LineRole; unrecognized?: boolean };
 
 type Stage =
   | { name: "upload" }
@@ -45,7 +50,7 @@ type Stage =
   | { name: "extracting" }
   | { name: "reviewing"; notice: string | null }
   | { name: "confirming" }
-  | { name: "done"; bill: ConfirmedBill; checks: BillChecks }
+  | { name: "done"; bill: ConfirmedBill; checks: BillChecks; verdict: Verdict }
   | { name: "error"; message: string; notice?: string };
 
 function extensionFor(file: File): string {
@@ -208,13 +213,39 @@ export default function UploadPage() {
   const [total, setTotal] = useState("");
   const [lines, setLines] = useState<EditableLine[]>([]);
 
+  // Optional -- "What were you promised?" A promise with no number still
+  // saves (drives the unexplained/inquiry outcome); leaving both blank
+  // means no promise row at all.
+  const [promiseStatement, setPromiseStatement] = useState("");
+  const [promiseAmount, setPromiseAmount] = useState("");
+
+  // Email drafting only ever happens after "done" (a confirmed_error or
+  // unexplained verdict triggers it automatically -- see the effect below).
+  // originalBody is kept alongside the editable body so "I've sent it" can
+  // tell whether the user changed it (sent_manually_edited vs sent_as_is).
+  const [emailDraft, setEmailDraft] = useState<
+    { messageId: string; subject: string; body: string; originalBody: string } | null
+  >(null);
+  const [emailError, setEmailError] = useState<string | null>(null);
+  const [emailActionTaken, setEmailActionTaken] = useState<string | null>(null);
+  // A ref, not state: it only guards the effect below against firing the
+  // same fetch twice, it's never read for rendering (draftingEmail, what
+  // the UI shows, is derived below instead of its own setState-in-effect).
+  const draftRequestedRef = useRef(false);
+
   // parseAmountInput returns null for anything that isn't a plain
   // (optionally comma-formatted) non-negative number -- the live preview
   // falls back to 0 for an in-progress/invalid entry so it doesn't crash
   // mid-keystroke, but canConfirm below requires every amount to actually
   // parse before the user can save.
   const parsedLines: BillLine[] = useMemo(
-    () => lines.map((l) => ({ label: l.label, amount: parseAmountInput(l.amount) ?? 0, role: l.role })),
+    () =>
+      lines.map((l) => ({
+        label: l.label,
+        amount: parseAmountInput(l.amount) ?? 0,
+        role: l.role,
+        unrecognized: l.unrecognized ?? false,
+      })),
     [lines]
   );
   const parsedTotalValue = parseAmountInput(total);
@@ -301,6 +332,11 @@ export default function UploadPage() {
     if (!uploadedPath || !canConfirm) return;
     setStage({ name: "confirming" });
 
+    const promisedAmountValue = parseAmountInput(promiseAmount);
+    const promise = promiseStatement.trim()
+      ? { statement: promiseStatement.trim(), promisedAmount: promisedAmountValue }
+      : null;
+
     try {
       const res = await fetch("/api/bills/confirm", {
         method: "POST",
@@ -311,6 +347,7 @@ export default function UploadPage() {
           bill_date: billDate,
           total: parsedTotal,
           line_items: parsedLines,
+          promise,
         }),
       });
       const data: ConfirmResponse = await res.json();
@@ -319,7 +356,11 @@ export default function UploadPage() {
         setStage({ name: "error", message: data.message });
         return;
       }
-      setStage({ name: "done", bill: data.bill, checks: data.checks });
+      setEmailDraft(null);
+      setEmailError(null);
+      setEmailActionTaken(null);
+      draftRequestedRef.current = false;
+      setStage({ name: "done", bill: data.bill, checks: data.checks, verdict: data.verdict });
     } catch {
       setStage({ name: "error", message: "Couldn't reach the server. Check your connection and try again." });
     }
@@ -332,6 +373,12 @@ export default function UploadPage() {
     setBillDate("");
     setTotal("");
     setLines([]);
+    setPromiseStatement("");
+    setPromiseAmount("");
+    setEmailDraft(null);
+    setEmailError(null);
+    setEmailActionTaken(null);
+    draftRequestedRef.current = false;
     setStage({ name: "upload" });
   }
 
@@ -345,6 +392,18 @@ export default function UploadPage() {
 
   function deleteLine(index: number) {
     setLines((prev) => prev.filter((_, i) => i !== index));
+  }
+
+  function toggleUnrecognized(index: number) {
+    setLines((prev) => prev.map((l, i) => (i === index ? { ...l, unrecognized: !l.unrecognized } : l)));
+  }
+
+  function updateEmailSubject(subject: string) {
+    setEmailDraft((prev) => (prev ? { ...prev, subject } : prev));
+  }
+
+  function updateEmailBody(body: string) {
+    setEmailDraft((prev) => (prev ? { ...prev, body } : prev));
   }
 
   // Removes the one line a checkpoint suggestion pointed at. Matched by
@@ -362,6 +421,69 @@ export default function UploadPage() {
     await supabase.auth.signOut();
     router.push("/login");
     router.refresh();
+  }
+
+  // A clean verdict never drafts an email -- nothing to dispute. The ref
+  // guard (not state) stops this firing twice for the same "done" stage;
+  // startOver/handleConfirm reset it for the next bill.
+  useEffect(() => {
+    if (stage.name !== "done") return;
+    if (stage.verdict.outcome === "clean") return;
+    if (emailDraft || draftRequestedRef.current) return;
+    draftRequestedRef.current = true;
+
+    fetch("/api/bills/draft-email", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        billId: stage.bill.id,
+        outcome: stage.verdict.outcome,
+        facts: stage.verdict.facts,
+      }),
+    })
+      .then((res) => res.json())
+      .then((data: DraftEmailResponse) => {
+        if (!data.success) {
+          setEmailError(data.message);
+          return;
+        }
+        setEmailDraft({ messageId: data.messageId, subject: data.subject, body: data.body, originalBody: data.body });
+      })
+      .catch(() => setEmailError("Couldn't reach the server to draft the email."));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stage]);
+
+  const draftingEmail =
+    stage.name === "done" && stage.verdict.outcome !== "clean" && emailDraft === null && emailError === null;
+
+  async function handleCopyEmail() {
+    if (!emailDraft) return;
+    await navigator.clipboard.writeText(`Subject: ${emailDraft.subject}\n\n${emailDraft.body}`);
+  }
+
+  function mailtoHref() {
+    if (!emailDraft) return "#";
+    return `mailto:?subject=${encodeURIComponent(emailDraft.subject)}&body=${encodeURIComponent(emailDraft.body)}`;
+  }
+
+  async function handleMarkSent() {
+    if (!emailDraft) return;
+    const edited = emailDraft.body !== emailDraft.originalBody;
+    try {
+      const res = await fetch(`/api/messages/${emailDraft.messageId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action_taken: edited ? "sent_manually_edited" : "sent_as_is",
+          final_body: edited ? emailDraft.body : undefined,
+        }),
+      });
+      const data = await res.json();
+      if (data.success) setEmailActionTaken(edited ? "sent_manually_edited" : "sent_as_is");
+    } catch {
+      // Best-effort -- the user has already sent the email either way;
+      // failing to log that here isn't worth blocking them over.
+    }
   }
 
   return (
@@ -423,6 +545,7 @@ export default function UploadPage() {
                 <th style={{ textAlign: "left", borderBottom: "1px solid #ccc" }}>Label</th>
                 <th style={{ textAlign: "right", borderBottom: "1px solid #ccc" }}>Amount</th>
                 <th style={{ textAlign: "left", borderBottom: "1px solid #ccc" }}>Role</th>
+                <th style={{ borderBottom: "1px solid #ccc" }}>Don&apos;t recognise?</th>
                 <th style={{ borderBottom: "1px solid #ccc" }} />
               </tr>
             </thead>
@@ -457,6 +580,14 @@ export default function UploadPage() {
                         ))}
                       </select>
                     </td>
+                    <td style={{ textAlign: "center" }}>
+                      <input
+                        type="checkbox"
+                        checked={line.unrecognized ?? false}
+                        onChange={() => toggleUnrecognized(i)}
+                        aria-label={`I don't recognise ${line.label || "this line"}`}
+                      />
+                    </td>
                     <td>
                       <button type="button" onClick={() => deleteLine(i)} aria-label={`Delete ${line.label || "line"}`}>
                         Delete
@@ -473,6 +604,30 @@ export default function UploadPage() {
 
           <ChecksSummary checks={livePreview} total={parsedTotal} onRemoveLine={removeLineByLabelAmount} />
 
+          <div style={{ marginTop: "1.5rem", padding: "0.75rem", border: "1px solid #ddd", borderRadius: 4 }}>
+            <p style={{ marginTop: 0 }}>
+              <strong>What were you promised?</strong> (optional)
+            </p>
+            <label>
+              Plan or description
+              <input
+                value={promiseStatement}
+                onChange={(e) => setPromiseStatement(e.target.value)}
+                placeholder="e.g. I was told this fee would be removed"
+                style={{ display: "block", width: "100%" }}
+              />
+            </label>
+            <label>
+              Promised amount (optional)
+              <input
+                value={promiseAmount}
+                onChange={(e) => setPromiseAmount(e.target.value)}
+                placeholder="e.g. 299.00"
+                style={{ display: "block", width: "100%" }}
+              />
+            </label>
+          </div>
+
           <button onClick={handleConfirm} disabled={!canConfirm} style={{ marginTop: "1rem" }}>
             This matches my paper bill
           </button>
@@ -483,7 +638,23 @@ export default function UploadPage() {
 
       {stage.name === "done" && (
         <section style={{ marginTop: "1.5rem" }}>
-          <p style={{ color: "#155724" }}>Saved.</p>
+          {stage.verdict.outcome === "clean" && (
+            <>
+              <p style={{ color: "#155724", fontSize: "1.2em", fontWeight: "bold" }}>✓ Your bill checks out.</p>
+              <p>Reconciled total: <strong>{stage.verdict.reconciledTotal.toFixed(2)}</strong></p>
+            </>
+          )}
+          {stage.verdict.outcome === "confirmed_error" && (
+            <p style={{ color: "#721c24", fontSize: "1.2em", fontWeight: "bold" }}>
+              We found a billing issue (difference of {Math.abs(stage.verdict.facts.gap).toFixed(2)}).
+            </p>
+          )}
+          {stage.verdict.outcome === "unexplained" && (
+            <p style={{ color: "#856404", fontSize: "1.2em", fontWeight: "bold" }}>
+              Something on this bill needs clarifying.
+            </p>
+          )}
+
           <p>
             <strong>{stage.bill.provider}</strong> -- {stage.bill.billDate}
           </p>
@@ -511,6 +682,48 @@ export default function UploadPage() {
             </tbody>
           </table>
           <ChecksSummary checks={stage.checks} total={stage.bill.total} />
+
+          {stage.verdict.outcome !== "clean" && (
+            <div style={{ marginTop: "1.5rem", padding: "0.75rem", border: "1px solid #ddd", borderRadius: 4 }}>
+              <p style={{ marginTop: 0 }}>
+                <strong>{stage.verdict.outcome === "confirmed_error" ? "Dispute email" : "Inquiry email"}</strong>
+              </p>
+              {draftingEmail && <p>Drafting...</p>}
+              {emailError && <p style={{ color: "#721c24" }}>{emailError}</p>}
+              {emailDraft && (
+                <>
+                  <label>
+                    Subject
+                    <input
+                      value={emailDraft.subject}
+                      onChange={(e) => updateEmailSubject(e.target.value)}
+                      style={{ display: "block", width: "100%" }}
+                    />
+                  </label>
+                  <label>
+                    Body
+                    <textarea
+                      value={emailDraft.body}
+                      onChange={(e) => updateEmailBody(e.target.value)}
+                      rows={10}
+                      style={{ display: "block", width: "100%" }}
+                    />
+                  </label>
+                  <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+                    <button type="button" onClick={handleCopyEmail}>
+                      Copy
+                    </button>
+                    <a href={mailtoHref()}>
+                      <button type="button">Open in email app</button>
+                    </a>
+                    <button type="button" onClick={handleMarkSent} disabled={emailActionTaken !== null}>
+                      {emailActionTaken ? "Marked as sent" : "I've sent it"}
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
 
           <button onClick={startOver} style={{ marginTop: "1rem" }}>
             Upload another bill

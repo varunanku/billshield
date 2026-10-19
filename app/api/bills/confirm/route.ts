@@ -3,8 +3,11 @@ import { createClient } from "@/lib/supabase/server";
 import { maskPII } from "@/lib/mask";
 import { isValidOwnedPath } from "@/lib/storage-paths";
 import { computeBillChecks, toPersistedLines, LINE_ROLES, type BillLine, type BillChecks, type PersistedLine } from "@/lib/bill-checks";
+import { decideVerdict, type Verdict } from "@/lib/verdict";
 
 export const maxDuration = 30;
+
+type PromiseInput = { statement: string; promisedAmount: number | null } | null;
 
 type ConfirmPayload = {
   path: string;
@@ -12,6 +15,7 @@ type ConfirmPayload = {
   bill_date: string;
   total: number;
   line_items: BillLine[];
+  promise: PromiseInput;
 };
 
 type ApiResponse =
@@ -19,6 +23,7 @@ type ApiResponse =
       success: true;
       bill: { id: string; provider: string; billDate: string; total: number; lineItems: PersistedLine[] };
       checks: BillChecks;
+      verdict: Verdict;
     }
   | { success: false; reason: "bad_request" | "unauthorized" | "server_error"; message: string };
 
@@ -33,6 +38,13 @@ function json(body: ApiResponse, status: number) {
 // never trusted as the final answer), masks text right at this storage
 // boundary, then writes the DB rows. Nothing before this point touches the
 // database.
+//
+// The verdict is also decided here, not in a later route: line_items has
+// no role column, so this is the last point the full role-rich line list
+// (charge/tax/discount/subtotal/payment/...) exists anywhere -- once
+// toPersistedLines runs, balance/subtotal/info/opening rows are gone for
+// good. A later "decide the verdict" step reading line_items back
+// couldn't reconstruct the checkpoints this needs.
 export async function POST(request: Request) {
   const supabase = await createClient();
   const {
@@ -48,7 +60,7 @@ export async function POST(request: Request) {
   if (!validated.ok) {
     return json({ success: false, reason: "bad_request", message: validated.message }, 400);
   }
-  const { path, provider, bill_date, total, line_items } = validated.data;
+  const { path, provider, bill_date, total, line_items, promise } = validated.data;
 
   // bills.file_path is about to be set to this path -- it must be this
   // user's own upload, not one they typed in pointing at someone else's
@@ -58,6 +70,7 @@ export async function POST(request: Request) {
   }
 
   const checks = computeBillChecks(line_items, total);
+  const verdict = decideVerdict({ lines: line_items, total, provider, billDate: bill_date, checks, promise });
 
   const maskedProvider = maskPII(provider);
   // toPersistedLines decides which rows exist and their amount sign/label
@@ -91,6 +104,7 @@ export async function POST(request: Request) {
       line_order: index + 1,
       label: li.label,
       amount: li.amount,
+      flagged: li.unrecognized,
     }))
   );
 
@@ -100,6 +114,17 @@ export async function POST(request: Request) {
       { success: false, reason: "server_error", message: "Couldn't save this bill's line items. Please try again." },
       500
     );
+  }
+
+  if (promise) {
+    const { error: promiseError } = await supabase.from("promises").insert({
+      bill_id: bill.id,
+      statement: maskPII(promise.statement),
+      promised_amount: promise.promisedAmount,
+    });
+    // A promise is optional context, not required for the bill itself to be
+    // saved -- log and continue rather than failing the whole confirm.
+    if (promiseError) console.error("Promise insert failed:", promiseError);
   }
 
   return json(
@@ -113,6 +138,7 @@ export async function POST(request: Request) {
         lineItems: maskedLineItems,
       },
       checks,
+      verdict,
     },
     200
   );
@@ -154,8 +180,19 @@ function validatePayload(value: unknown): { ok: true; data: ConfirmPayload } | {
     if (!label || amount === null || !role) {
       return { ok: false, message: "Every line needs a label, amount and role." };
     }
-    line_items.push({ label, amount, role });
+    line_items.push({ label, amount, role, unrecognized: item.unrecognized === true });
   }
 
-  return { ok: true, data: { path, provider, bill_date, total, line_items } };
+  let promise: PromiseInput = null;
+  if (typeof v.promise === "object" && v.promise !== null) {
+    const p = v.promise as Record<string, unknown>;
+    const statement = typeof p.statement === "string" ? p.statement.trim() : "";
+    if (statement) {
+      const promisedAmount =
+        typeof p.promisedAmount === "number" && Number.isFinite(p.promisedAmount) ? p.promisedAmount : null;
+      promise = { statement, promisedAmount };
+    }
+  }
+
+  return { ok: true, data: { path, provider, bill_date, total, line_items, promise } };
 }
