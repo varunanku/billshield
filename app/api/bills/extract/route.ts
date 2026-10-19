@@ -4,12 +4,10 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { isValidOwnedPath } from "@/lib/storage-paths";
 import { pdfToPngImages } from "@/lib/pdf-to-images";
 import { extractBillFromImages as extractWithGroq, type ExtractedBill, type ImageInput } from "@/lib/groq";
-import { extractBillFromImages as extractWithGemini } from "@/lib/gemini";
+import { extractBillFromImages as extractWithOpenRouter } from "@/lib/openrouter";
 import { USE_GROQ } from "@/lib/provider";
 
-// Gemini accepts PDF bytes directly (no rasterizing, no page cap), so only
-// the Groq path needs pdfToPngImages.
-const extractBillFromImages = USE_GROQ ? extractWithGroq : extractWithGemini;
+const extractBillFromImages = USE_GROQ ? extractWithGroq : extractWithOpenRouter;
 
 export const maxDuration = 60; // vision call + PDF rendering can take a few seconds; lower this if your Vercel plan caps it.
 
@@ -104,7 +102,10 @@ export async function POST(request: Request) {
   let images: ImageInput[];
   let notice: string | null = null;
 
-  if (isPdf && USE_GROQ) {
+  if (isPdf) {
+    // Both providers now speak the OpenAI-compatible image_url content
+    // part (Groq directly, OpenRouter as its own pass-through format) --
+    // neither accepts a raw PDF there, so every PDF is rasterized first.
     let rendered;
     try {
       rendered = pdfToPngImages(bytes, MAX_PDF_PAGES);
@@ -119,8 +120,6 @@ export async function POST(request: Request) {
       notice = `This PDF has ${rendered.totalPages} pages; only the first ${MAX_PDF_PAGES} were read.`;
     }
   } else {
-    // Gemini takes the raw PDF (or image) bytes directly -- every page of a
-    // multi-page PDF goes through inline, no rasterizing or page cap.
     images = [{ bytes, mimeType }];
   }
 
@@ -143,7 +142,7 @@ export async function POST(request: Request) {
   }
 
   if (!extraction.ok) {
-    console.error(`${USE_GROQ ? "Groq" : "Gemini"} extraction failed:`, extraction.detail);
+    console.error(`${USE_GROQ ? "Groq" : "OpenRouter"} extraction failed:`, extraction.detail);
     return json(
       {
         success: false,

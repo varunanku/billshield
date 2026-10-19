@@ -1,6 +1,6 @@
 // Pure prompt-building and reply-parsing for the post-verdict follow-up
 // chat. No network, so it's testable directly -- the actual LLM call
-// lives in groq.ts/gemini.ts (answerFollowupQuestion), same as
+// lives in groq.ts/openrouter.ts (answerFollowupQuestion), same as
 // extraction's provider split.
 import { LINE_ROLES, type BillLine, type LineRole } from "./bill-checks.ts";
 

@@ -27,7 +27,7 @@ export type GroqExtractResult =
   | { ok: false; kind: "rate_limited"; retryAfterSeconds: number | null }
   | { ok: false; kind: "extraction_failed"; detail: string };
 
-// Exported so lib/gemini.ts reuses the exact same wording -- one prompt,
+// Exported so lib/openrouter.ts reuses the exact same wording -- one prompt,
 // not two copies that could drift apart as either gets tuned.
 export const EXTRACTION_PROMPT = `You are reading a bill or receipt image. Return ONLY a single JSON object, no other text, matching exactly this shape:
 
@@ -288,7 +288,7 @@ export async function extractBillFromImages(images: ImageInput[]): Promise<GroqE
   return { ok: true, data };
 }
 
-// Exported so lib/gemini.ts can parse its own response into the same shape
+// Exported so lib/openrouter.ts can parse its own response into the same shape
 // without duplicating this coercion logic.
 export function coerceExtractedBill(value: unknown): ExtractedBill | null {
   if (typeof value !== "object" || value === null) return null;

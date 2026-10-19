@@ -911,7 +911,7 @@ export default function UploadPage() {
     setChatMessages((prev) => [...prev, { kind: "text", role: "user", content: question }]);
 
     // Purely cosmetic reassurance, not a real-time status feed: the actual
-    // Gemini-429-retry-then-Groq-fallback happens server-side inside one
+    // OpenRouter-429-retry-then-Groq-fallback happens server-side inside one
     // request/response, so this is the closest a plain fetch can get to
     // "never a dead end" while that's in flight.
     const busyTimer = setTimeout(() => setChatBusyRetrying(true), 4000);

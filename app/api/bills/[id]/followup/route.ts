@@ -13,24 +13,24 @@ import {
 import { computeHistoryQuery } from "@/lib/history";
 import { computeTaxBreakdown, findMatchingRate, buildTaxBreakdownAddendum } from "@/lib/gst";
 import { answerFollowupQuestion as askGroq, type ChatResult } from "@/lib/groq";
-import { answerFollowupQuestion as askGemini } from "@/lib/gemini";
+import { answerFollowupQuestion as askOpenRouter } from "@/lib/openrouter";
 import { USE_GROQ } from "@/lib/provider";
 
 export const maxDuration = 45;
 
-// Gemini is the default/primary provider; on a 429 from it specifically,
-// wait the given retry-after (capped, so this route can't blow its own
-// time budget), retry once, and if that's still rate-limited, fall back
-// to Groq for this one answer rather than failing the turn outright.
+// OpenRouter is the default/primary provider; on a 429 from it
+// specifically, wait the given retry-after (capped, so this route can't
+// blow its own time budget), retry once, and if that's still rate-limited,
+// fall back to Groq for this one answer rather than failing the turn outright.
 async function answerFollowupQuestion(systemPrompt: string, history: ChatTurn[]): Promise<ChatResult> {
-  const primary = USE_GROQ ? askGroq : askGemini;
+  const primary = USE_GROQ ? askGroq : askOpenRouter;
   const result = await primary(systemPrompt, history);
   if (result.ok || result.kind !== "rate_limited" || USE_GROQ) return result;
 
   const waitSeconds = Math.min(result.retryAfterSeconds ?? 5, 10);
   await new Promise((resolve) => setTimeout(resolve, waitSeconds * 1000));
 
-  const retried = await askGemini(systemPrompt, history);
+  const retried = await askOpenRouter(systemPrompt, history);
   if (retried.ok || retried.kind !== "rate_limited") return retried;
 
   return askGroq(systemPrompt, history);

@@ -6,7 +6,7 @@
 // surface.
 //
 // Usage:
-//   node --env-file=.env.local scripts/extract-regression.mjs <imagePath> <expectedJsonPath> [runs] [--provider=gemini|groq]
+//   node --env-file=.env.local scripts/extract-regression.mjs <imagePath> <expectedJsonPath> [runs] [--provider=openrouter|groq]
 //
 // Both path arguments point OUTSIDE this repo on purpose -- a real bill
 // photo and its expected-lines fixture are not something to commit.
@@ -23,7 +23,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { extractBillFromImages as extractWithGroq } from "../lib/groq.ts";
-import { extractBillFromImages as extractWithGemini } from "../lib/gemini.ts";
+import { extractBillFromImages as extractWithOpenRouter } from "../lib/openrouter.ts";
 
 const EPSILON = 0.01;
 
@@ -31,15 +31,15 @@ const EPSILON = 0.01;
 // regardless of what EXTRACTION_PROVIDER the app itself is set to.
 const providerArg = process.argv.find((a) => a.startsWith("--provider="));
 const provider = providerArg ? providerArg.split("=")[1] : "groq";
-if (provider !== "groq" && provider !== "gemini") {
-  console.error(`--provider must be "groq" or "gemini", got "${provider}"`);
+if (provider !== "groq" && provider !== "openrouter") {
+  console.error(`--provider must be "groq" or "openrouter", got "${provider}"`);
   process.exit(1);
 }
-const extractBillFromImages = provider === "gemini" ? extractWithGemini : extractWithGroq;
+const extractBillFromImages = provider === "openrouter" ? extractWithOpenRouter : extractWithGroq;
 
 const [imagePath, expectedPath, runsArg] = process.argv.slice(2).filter((a) => !a.startsWith("--provider="));
 if (!imagePath || !expectedPath) {
-  console.error("Usage: node scripts/extract-regression.mjs <imagePath> <expectedJsonPath> [runs] [--provider=gemini|groq]");
+  console.error("Usage: node scripts/extract-regression.mjs <imagePath> <expectedJsonPath> [runs] [--provider=openrouter|groq]");
   process.exit(1);
 }
 const RUNS = runsArg ? Number(runsArg) : 3;
