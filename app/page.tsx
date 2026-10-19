@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 import {
   computeBillChecks,
   removeFirstMatch,
+  parseAmountInput,
   LINE_ROLES,
   EPSILON,
   type BillLine,
@@ -207,19 +208,25 @@ export default function UploadPage() {
   const [total, setTotal] = useState("");
   const [lines, setLines] = useState<EditableLine[]>([]);
 
+  // parseAmountInput returns null for anything that isn't a plain
+  // (optionally comma-formatted) non-negative number -- the live preview
+  // falls back to 0 for an in-progress/invalid entry so it doesn't crash
+  // mid-keystroke, but canConfirm below requires every amount to actually
+  // parse before the user can save.
   const parsedLines: BillLine[] = useMemo(
-    () => lines.map((l) => ({ label: l.label, amount: Number(l.amount) || 0, role: l.role })),
+    () => lines.map((l) => ({ label: l.label, amount: parseAmountInput(l.amount) ?? 0, role: l.role })),
     [lines]
   );
-  const parsedTotal = Number(total) || 0;
+  const parsedTotalValue = parseAmountInput(total);
+  const parsedTotal = parsedTotalValue ?? 0;
   const livePreview = useMemo(() => computeBillChecks(parsedLines, parsedTotal), [parsedLines, parsedTotal]);
 
   const canConfirm =
     provider.trim().length > 0 &&
     /^\d{4}-\d{2}-\d{2}$/.test(billDate) &&
-    total.trim().length > 0 &&
+    parsedTotalValue !== null &&
     lines.length > 0 &&
-    lines.every((l) => l.label.trim().length > 0 && l.amount.trim().length > 0);
+    lines.every((l) => l.label.trim().length > 0 && parseAmountInput(l.amount) !== null);
 
   function handleFileSelected(selected: File | null) {
     if (selected && isHeicFile(selected)) {
@@ -332,6 +339,14 @@ export default function UploadPage() {
     setLines((prev) => prev.map((l, i) => (i === index ? { ...l, ...patch } : l)));
   }
 
+  function addLine() {
+    setLines((prev) => [...prev, { label: "", amount: "", role: "charge" }]);
+  }
+
+  function deleteLine(index: number) {
+    setLines((prev) => prev.filter((_, i) => i !== index));
+  }
+
   // Removes the one line a checkpoint suggestion pointed at. Matched by
   // label + amount rather than index, since the suggestion comes from
   // computeBillChecks's own re-derivation of the line list, not from an
@@ -398,6 +413,9 @@ export default function UploadPage() {
             Printed total
             <input value={total} onChange={(e) => setTotal(e.target.value)} style={{ display: "block", width: "100%" }} />
           </label>
+          {total.trim() !== "" && parsedTotalValue === null && (
+            <p style={{ color: "#721c24", margin: "2px 0" }}>Enter a valid number, e.g. 1234.56 or 1,234.56.</p>
+          )}
 
           <table style={{ width: "100%", borderCollapse: "collapse", marginTop: "1rem" }}>
             <thead>
@@ -405,34 +423,53 @@ export default function UploadPage() {
                 <th style={{ textAlign: "left", borderBottom: "1px solid #ccc" }}>Label</th>
                 <th style={{ textAlign: "right", borderBottom: "1px solid #ccc" }}>Amount</th>
                 <th style={{ textAlign: "left", borderBottom: "1px solid #ccc" }}>Role</th>
+                <th style={{ borderBottom: "1px solid #ccc" }} />
               </tr>
             </thead>
             <tbody>
-              {lines.map((line, i) => (
-                <tr key={i}>
-                  <td>
-                    <input value={line.label} onChange={(e) => updateLine(i, { label: e.target.value })} style={{ width: "100%" }} />
-                  </td>
-                  <td>
-                    <input
-                      value={line.amount}
-                      onChange={(e) => updateLine(i, { amount: e.target.value })}
-                      style={{ width: "100%", textAlign: "right" }}
-                    />
-                  </td>
-                  <td>
-                    <select value={line.role} onChange={(e) => updateLine(i, { role: e.target.value as LineRole })}>
-                      {LINE_ROLES.map((r) => (
-                        <option key={r} value={r}>
-                          {ROLE_LABELS[r]}
-                        </option>
-                      ))}
-                    </select>
-                  </td>
-                </tr>
-              ))}
+              {lines.map((line, i) => {
+                const amountInvalid = line.amount.trim() !== "" && parseAmountInput(line.amount) === null;
+                return (
+                  <tr key={i}>
+                    <td>
+                      <input
+                        value={line.label}
+                        onChange={(e) => updateLine(i, { label: e.target.value })}
+                        style={{ width: "100%" }}
+                      />
+                    </td>
+                    <td>
+                      <input
+                        value={line.amount}
+                        onChange={(e) => updateLine(i, { amount: e.target.value })}
+                        style={{ width: "100%", textAlign: "right" }}
+                      />
+                      {amountInvalid && (
+                        <div style={{ color: "#721c24", fontSize: "0.85em" }}>Enter a valid number.</div>
+                      )}
+                    </td>
+                    <td>
+                      <select value={line.role} onChange={(e) => updateLine(i, { role: e.target.value as LineRole })}>
+                        {LINE_ROLES.map((r) => (
+                          <option key={r} value={r}>
+                            {ROLE_LABELS[r]}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
+                    <td>
+                      <button type="button" onClick={() => deleteLine(i)} aria-label={`Delete ${line.label || "line"}`}>
+                        Delete
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
+          <button type="button" onClick={addLine} style={{ marginTop: 8 }}>
+            + Add line
+          </button>
 
           <ChecksSummary checks={livePreview} total={parsedTotal} onRemoveLine={removeLineByLabelAmount} />
 

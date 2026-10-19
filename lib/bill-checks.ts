@@ -316,3 +316,16 @@ export function removeFirstMatch<T>(items: T[], predicate: (item: T) => boolean)
   if (index === -1) return items;
   return items.filter((_, i) => i !== index);
 }
+
+// Review-screen amount inputs accept "1,234.56" as readily as "1234.56" --
+// strips thousands separators, then requires a plain non-negative decimal
+// (every amount in this app is a positive magnitude; sign is applied later,
+// e.g. toPersistedLines negates discount). Returns null for anything else,
+// so the input can show an inline "enter a valid number" error instead of
+// silently treating garbage as 0.
+export function parseAmountInput(raw: string): number | null {
+  const cleaned = raw.trim().replace(/,/g, "");
+  if (!/^\d+(\.\d+)?$/.test(cleaned)) return null;
+  const value = Number(cleaned);
+  return Number.isFinite(value) ? value : null;
+}
