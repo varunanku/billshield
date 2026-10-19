@@ -75,8 +75,20 @@ export function totalClaimsAreCorrect(draft: EmailDraft, facts: Facts): boolean 
   return matches.every((m) => Math.abs(Number(m[1].replace(/[₹,\s]/g, "")) - facts.total) <= NUMBER_EPSILON);
 }
 
+// Same idea as totalClaimsAreCorrect, for "difference": a draft that calls
+// some other fact number (e.g. billedAmount) "the difference" would pass
+// allNumbersAreFacts (it's a real fact number) while still misstating
+// which figure the dispute is actually about.
+const DIFFERENCE_CLAIM = /\bdifference\b[^0-9₹]{0,20}(₹?\s*\d[\d,]*\.\d{2})/gi;
+
+export function differenceClaimsAreCorrect(draft: EmailDraft, facts: Facts): boolean {
+  const text = `${draft.subject} ${draft.body}`;
+  const matches = [...text.matchAll(DIFFERENCE_CLAIM)];
+  return matches.every((m) => Math.abs(Number(m[1].replace(/[₹,\s]/g, "")) - Math.abs(facts.gap)) <= NUMBER_EPSILON);
+}
+
 function passesNumberGuard(draft: EmailDraft, facts: Facts): boolean {
-  return allNumbersAreFacts(draft, facts) && totalClaimsAreCorrect(draft, facts);
+  return allNumbersAreFacts(draft, facts) && totalClaimsAreCorrect(draft, facts) && differenceClaimsAreCorrect(draft, facts);
 }
 
 // True for cannot_verify's email specifically: an inquiry-tone draft with a
@@ -107,10 +119,14 @@ Billed amount (as reconciled by the user): Rs ${facts.billedAmount.toFixed(2)}
 ${facts.promisedAmount !== null ? `Promised amount: Rs ${facts.promisedAmount.toFixed(2)}\n` : ""}Disputed line(s):
 ${lineText}
 Difference: Rs ${Math.abs(facts.gap).toFixed(2)} (${facts.gap >= 0 ? "the user appears to have been undercharged or owes more" : "the user appears to have overpaid"})
-
+${facts.reconcilingBalanceLabel ? `Note: a line labelled "${facts.reconcilingBalanceLabel}" on the bill matches this difference exactly -- mention it as confirming the excess.\n` : ""}
 Tone: ${
     tone === "confident"
-      ? "Confident and direct. State the issue plainly and ask for a correction or a refund."
+      ? `Confident and direct. State the issue plainly.${
+          facts.gap < 0
+            ? " Ask for a refund or an adjustment against the next bill."
+            : " Ask for a correction."
+        }`
       : isUnpinpointedGap(facts)
         ? `Soft and curious, NOT accusatory -- this is a small, unpinpointed difference, not a confirmed error. Say you'd like to understand a small difference of Rs ${Math.abs(facts.gap).toFixed(2)} on the bill, and ask where it comes from. Do not name a specific wrong charge.`
         : "Soft and inquiry-based. Ask the provider to confirm or clarify -- do not accuse them of an error."
@@ -158,14 +174,18 @@ export function templateEmail(facts: Facts, tone: Tone): EmailDraft {
   if (tone === "confident") {
     const overpaid = facts.gap < 0;
     return {
-      subject: `Billing discrepancy on my ${facts.billDate} bill`,
+      subject: overpaid ? `Overpayment on my ${facts.billDate} bill` : `Billing discrepancy on my ${facts.billDate} bill`,
       body: `Dear ${facts.provider} Support,
 
 My bill dated ${facts.billDate} shows a total of Rs ${facts.total.toFixed(2)}. The amounts I can verify come to Rs ${facts.billedAmount.toFixed(2)}, a difference of Rs ${Math.abs(facts.gap).toFixed(2)}${overpaid ? ", which I appear to have overpaid" : ""}.${
         facts.disputedLines.length > 0 ? ` This concerns ${lineText}.` : ""
+      }${
+        facts.reconcilingBalanceLabel
+          ? ` This matches the "${facts.reconcilingBalanceLabel}" line on my bill, confirming the excess.`
+          : ""
       }
 
-Could you please review this and ${overpaid ? "advise on a refund or credit" : "correct the charge"}? I'd appreciate a reference number for this query.
+Could you please review this and ${overpaid ? "arrange a refund or an adjustment against my next bill" : "correct the charge"}? I'd appreciate a reference number for this query.
 
 Regards,
 [Name]`,

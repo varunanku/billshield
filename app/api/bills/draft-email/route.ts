@@ -155,6 +155,7 @@ function validatePayload(
   }
   const promisedAmount =
     typeof f.promisedAmount === "number" && Number.isFinite(f.promisedAmount) ? f.promisedAmount : null;
+  const reconcilingBalanceLabel = typeof f.reconcilingBalanceLabel === "string" ? f.reconcilingBalanceLabel : null;
 
   const disputedLines: { label: string; amount: number }[] = [];
   if (Array.isArray(f.disputedLines)) {
@@ -172,7 +173,17 @@ function validatePayload(
     data: {
       billId,
       outcome,
-      facts: { provider, billDate, billReference: null, disputedLines, gap, promisedAmount, billedAmount, total },
+      facts: {
+        provider,
+        billDate,
+        billReference: null,
+        disputedLines,
+        gap,
+        promisedAmount,
+        billedAmount,
+        total,
+        reconcilingBalanceLabel,
+      },
       tonePreset,
     },
   };

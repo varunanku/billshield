@@ -12,6 +12,7 @@ type PromiseInput = { statement: string; promisedAmount: number | null } | null;
 type ConfirmPayload = {
   path: string;
   provider: string;
+  provider_legal_name: string | null;
   bill_date: string;
   total: number;
   line_items: BillLine[];
@@ -21,7 +22,14 @@ type ConfirmPayload = {
 type ApiResponse =
   | {
       success: true;
-      bill: { id: string; provider: string; billDate: string; total: number; lineItems: PersistedLine[] };
+      bill: {
+        id: string;
+        provider: string;
+        providerLegalName: string | null;
+        billDate: string;
+        total: number;
+        lineItems: PersistedLine[];
+      };
       checks: BillChecks;
       verdict: Verdict;
     }
@@ -60,7 +68,7 @@ export async function POST(request: Request) {
   if (!validated.ok) {
     return json({ success: false, reason: "bad_request", message: validated.message }, 400);
   }
-  const { path, provider, bill_date, total, line_items, promise } = validated.data;
+  const { path, provider, provider_legal_name, bill_date, total, line_items, promise } = validated.data;
 
   // bills.file_path is about to be set to this path -- it must be this
   // user's own upload, not one they typed in pointing at someone else's
@@ -73,6 +81,7 @@ export async function POST(request: Request) {
   const verdict = decideVerdict({ lines: line_items, total, provider, billDate: bill_date, checks, promise });
 
   const maskedProvider = maskPII(provider);
+  const maskedProviderLegalName = provider_legal_name ? maskPII(provider_legal_name) : null;
   // toPersistedLines decides which rows exist and their amount sign/label
   // convention (see lib/bill-checks.ts); masking the label text is still
   // this route's job, skipped for the literal "Amount Paid" relabel.
@@ -86,6 +95,7 @@ export async function POST(request: Request) {
     .insert({
       user_id: user.id,
       provider_name: maskedProvider,
+      provider_legal_name: maskedProviderLegalName,
       bill_date,
       total_amount: total,
       file_path: path,
@@ -133,6 +143,7 @@ export async function POST(request: Request) {
       bill: {
         id: bill.id,
         provider: maskedProvider,
+        providerLegalName: maskedProviderLegalName,
         billDate: bill_date,
         total,
         lineItems: maskedLineItems,
@@ -155,6 +166,9 @@ function validatePayload(value: unknown): { ok: true; data: ConfirmPayload } | {
 
   const provider = typeof v.provider === "string" ? v.provider.trim() : "";
   if (!provider) return { ok: false, message: "Please enter the provider name." };
+
+  const providerLegalNameRaw = typeof v.provider_legal_name === "string" ? v.provider_legal_name.trim() : "";
+  const provider_legal_name = providerLegalNameRaw || null;
 
   const bill_date = typeof v.bill_date === "string" ? v.bill_date : "";
   if (!/^\d{4}-\d{2}-\d{2}$/.test(bill_date)) {
@@ -194,5 +208,5 @@ function validatePayload(value: unknown): { ok: true; data: ConfirmPayload } | {
     }
   }
 
-  return { ok: true, data: { path, provider, bill_date, total, line_items, promise } };
+  return { ok: true, data: { path, provider, provider_legal_name, bill_date, total, line_items, promise } };
 }

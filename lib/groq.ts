@@ -11,6 +11,7 @@ const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
 
 export type ExtractedBill = {
   provider: string | null;
+  provider_legal_name: string | null;
   bill_date: string | null;
   total: number | null;
   line_items: { label: string; amount: number; role: LineRole }[];
@@ -27,6 +28,7 @@ export const EXTRACTION_PROMPT = `You are reading a bill or receipt image. Retur
 
 {
   "provider": string or null,
+  "provider_legal_name": string or null,
   "bill_date": string (YYYY-MM-DD) or null,
   "total": number or null,
   "line_items": [ { "label": string, "amount": number, "role": string } ]
@@ -109,6 +111,17 @@ for a label, that isn't printed together as a pair.
 Rules:
 - Only report what is actually printed on the bill. Never guess, infer or compute a value that is not legible.
 - If a field is missing or illegible, use null (for provider/bill_date/total) or omit the line item.
+- "bill_date": copy the year exactly as printed. If the bill prints a
+  2-digit year (e.g. "24" or "'24"), expand it to the 2000s (20YY), never
+  1900s -- a bill never predates the year 2000.
+- "provider": the brand or product name the customer actually recognises --
+  from the logo, letterhead, or product name (e.g. "Overleaf", "Airtel").
+- "provider_legal_name": the registered company name, ONLY if separately
+  printed (e.g. in small print, an address block, or a footer) and
+  different from the brand -- for example a bill from "Overleaf" might
+  print "Digital Science UK Limited" as the billing entity. If no such
+  separate legal name is printed, or it's the same as the brand, use null.
+  Never guess or infer one.
 - "total" is the single grand total amount printed on the bill.
 - "line_items" are the individual lines (label + amount + role) as printed, in the order they appear.
 - Your only job for each line is to transcribe its printed label and amount and classify its role. Do not add up, multiply, net out, or otherwise calculate anything yourself.
@@ -263,6 +276,7 @@ export function coerceExtractedBill(value: unknown): ExtractedBill | null {
 
   return {
     provider: typeof v.provider === "string" ? v.provider : null,
+    provider_legal_name: typeof v.provider_legal_name === "string" ? v.provider_legal_name : null,
     bill_date: typeof v.bill_date === "string" ? v.bill_date : null,
     total: typeof v.total === "number" ? v.total : null,
     line_items,

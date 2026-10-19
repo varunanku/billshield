@@ -32,6 +32,7 @@ const RESPONSE_SCHEMA = {
   type: "OBJECT",
   properties: {
     provider: { type: "STRING", nullable: true },
+    provider_legal_name: { type: "STRING", nullable: true },
     bill_date: { type: "STRING", nullable: true },
     total: { type: "NUMBER", nullable: true },
     line_items: {
@@ -47,7 +48,7 @@ const RESPONSE_SCHEMA = {
       },
     },
   },
-  required: ["provider", "bill_date", "total", "line_items"],
+  required: ["provider", "provider_legal_name", "bill_date", "total", "line_items"],
 };
 
 export async function extractBillFromImages(images: ImageInput[]): Promise<GroqExtractResult> {

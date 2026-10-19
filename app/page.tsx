@@ -14,12 +14,14 @@ import {
   type BillChecks,
   type Checkpoint,
 } from "@/lib/bill-checks";
-import type { Verdict } from "@/lib/verdict";
+import { shouldDraftEmail, type Verdict } from "@/lib/verdict";
 import { MAX_FOLLOWUP_MESSAGES, type FollowupBillContext } from "@/lib/followup";
 import type { TonePreset } from "@/lib/email-draft";
+import { isSuspiciousBillDate } from "@/lib/date-check";
 
 type ExtractedBill = {
   provider: string | null;
+  provider_legal_name: string | null;
   bill_date: string | null;
   total: number | null;
   line_items: BillLine[];
@@ -32,6 +34,7 @@ type ExtractResponse =
 type ConfirmedBill = {
   id: string;
   provider: string;
+  providerLegalName: string | null;
   billDate: string;
   total: number;
   lineItems: (BillLine & { amount: number })[];
@@ -100,13 +103,12 @@ function money(n: number) {
   return n.toFixed(2);
 }
 
-// Every outcome except "clean" drafts an email. cannot_verify now only
-// exists for gaps above MINOR_GAP_TOLERANCE (a sub-5.00 unpinpointed gap
-// becomes "clean" with roundingGap set, in lib/verdict.ts) -- so by the
-// time it's reached here, there's always a real-enough gap worth a soft,
-// non-accusatory inquiry email asking the provider to help clarify it.
-function outcomeDraftsEmail(outcome: Verdict["outcome"]): boolean {
-  return outcome === "confirmed_error" || outcome === "cannot_verify" || outcome === "unexplained";
+// Every outcome except "clean" drafts an email -- UNLESS the disputed
+// amount itself is under Rs 1.00 (shouldDraftEmail), which is never worth
+// anyone's time, provider included.
+function verdictDraftsEmail(verdict: Verdict): boolean {
+  if (verdict.outcome === "clean") return false;
+  return shouldDraftEmail(verdict.facts);
 }
 
 // Upload -> Review -> Verdict. A minimal 3-dot/line stepper, not shown on
@@ -228,12 +230,14 @@ function ChecksSummary({ checks, total }: { checks: BillChecks; total: number })
 
       {checks.payment && (
         <p>
-          Payment check: billed {money(checks.payment.coveredAmount)} vs paid {money(checks.payment.amountPaid)} --{" "}
+          Payment check: billed {money(checks.billedSum)} vs paid {money(checks.payment.amountPaid)} --{" "}
           {checks.payment.verdict === "overpaid"
             ? `overpaid by ${money(Math.abs(checks.payment.signedDifference))}`
             : checks.payment.verdict === "dispute"
             ? `underpaid by ${money(checks.payment.signedDifference)}`
             : "paid in full"}
+          {checks.payment.reconcilingBalanceLabel &&
+            ` (matches the "${checks.payment.reconcilingBalanceLabel}" line)`}
         </p>
       )}
     </div>
@@ -269,6 +273,7 @@ export default function UploadPage() {
   }, []);
 
   const [provider, setProvider] = useState("");
+  const [providerLegalName, setProviderLegalName] = useState<string | null>(null);
   const [billDate, setBillDate] = useState("");
   const [total, setTotal] = useState("");
   const [lines, setLines] = useState<EditableLine[]>([]);
@@ -387,6 +392,7 @@ export default function UploadPage() {
       }
 
       setProvider(data.extraction.provider ?? "");
+      setProviderLegalName(data.extraction.provider_legal_name ?? null);
       setBillDate(data.extraction.bill_date ?? "");
       setTotal(data.extraction.total !== null ? String(data.extraction.total) : "");
       setLines(
@@ -455,6 +461,7 @@ export default function UploadPage() {
         body: JSON.stringify({
           path: uploadedPath,
           provider,
+          provider_legal_name: providerLegalName,
           bill_date: billDate,
           total: parsedTotal,
           line_items: parsedLines,
@@ -502,6 +509,7 @@ export default function UploadPage() {
     setFile(null);
     setUploadedPath(null);
     setProvider("");
+    setProviderLegalName(null);
     setBillDate("");
     setTotal("");
     setLines([]);
@@ -575,6 +583,7 @@ export default function UploadPage() {
       stage.verdict.outcome !== "unexplained"
     )
       return;
+    if (!shouldDraftEmail(stage.verdict.facts)) return;
     if (emailDraft || draftRequestedRef.current) return;
     draftRequestedRef.current = true;
 
@@ -606,7 +615,7 @@ export default function UploadPage() {
   }, [stage]);
 
   const draftingEmail =
-    stage.name === "done" && outcomeDraftsEmail(stage.verdict.outcome) && emailDraft === null && emailError === null;
+    stage.name === "done" && verdictDraftsEmail(stage.verdict) && emailDraft === null && emailError === null;
 
   async function handleCopyEmail() {
     if (!emailDraft) return;
@@ -843,6 +852,7 @@ export default function UploadPage() {
             <label className="flex flex-col gap-1 text-sm">
               Provider
               <input value={provider} onChange={(e) => setProvider(e.target.value)} className={inputClasses} />
+              {providerLegalName && <span className="text-xs text-ink-muted">Billing entity: {providerLegalName}</span>}
             </label>
             <label className="flex flex-col gap-1 text-sm">
               Bill date (YYYY-MM-DD)
@@ -852,6 +862,9 @@ export default function UploadPage() {
                 placeholder="YYYY-MM-DD"
                 className={inputClasses}
               />
+              {isSuspiciousBillDate(billDate) && (
+                <span className="text-xs text-amber">⚠ Check this date -- it looks off.</span>
+              )}
             </label>
           </div>
           <label className="flex flex-col gap-1 text-sm">
@@ -971,46 +984,63 @@ export default function UploadPage() {
 
           {stage.verdict.outcome === "clean" && (
             <div className="rounded-xl bg-emerald-soft p-5">
-              <p className="font-serif text-xl text-emerald">
-                ✓ Your bill checks out{stage.verdict.roundingGap !== null ? " (within rounding)" : ""}.
-              </p>
+              <p className="font-serif text-xl text-emerald">Your bill checks out.</p>
               <p className="mt-1 text-ink-muted">
                 Reconciled total: <span className="tabular-nums font-medium text-ink">{money(stage.verdict.reconciledTotal)}</span>
               </p>
-              {stage.verdict.roundingGap !== null && (
+              {stage.verdict.roundingNote && (
                 <p className="mt-1 text-sm text-ink-muted">
-                  A small difference of Rs {money(Math.abs(stage.verdict.roundingGap))} was found but is too small to be worth
-                  disputing.
+                  Rs {money(stage.verdict.roundingNote.gap)} is the bill&apos;s rounding to Rs{" "}
+                  {money(stage.verdict.roundingNote.roundedTotal)}.
                 </p>
               )}
             </div>
           )}
           {stage.verdict.outcome === "confirmed_error" && (
             <div className="rounded-xl bg-brick-soft p-5">
-              <p className="font-serif text-xl text-brick">We found a billing issue.</p>
-              <p className="mt-1 text-ink-muted">
-                Difference: <span className="tabular-nums font-medium text-ink">{money(Math.abs(stage.verdict.facts.gap))}</span>
+              <p className="font-serif text-xl text-brick">
+                {stage.verdict.reason === "overpaid"
+                  ? `You overpaid Rs ${money(Math.abs(stage.verdict.facts.gap))}.`
+                  : stage.verdict.reason === "promise_mismatch"
+                  ? stage.verdict.facts.gap >= 0
+                    ? `You were charged Rs ${money(Math.abs(stage.verdict.facts.gap))} more than you were promised.`
+                    : `You were promised Rs ${money(Math.abs(stage.verdict.facts.gap))} more than you were charged.`
+                  : `Rs ${money(Math.abs(stage.verdict.facts.gap))} on this bill doesn't add up.`}
               </p>
+              {stage.verdict.facts.reconcilingBalanceLabel && (
+                <p className="mt-1 text-sm text-ink-muted">
+                  This matches the &quot;{stage.verdict.facts.reconcilingBalanceLabel}&quot; line on your bill.
+                </p>
+              )}
             </div>
           )}
           {stage.verdict.outcome === "cannot_verify" && (
             <div className="rounded-xl bg-amber-soft p-5">
-              <p className="font-serif text-xl text-amber">We couldn&apos;t verify this bill.</p>
+              <p className="font-serif text-xl text-amber">We couldn&apos;t read every line of this bill.</p>
               <p className="mt-1 text-ink-muted">
-                Some lines may be missing or misread -- gap:{" "}
-                <span className="tabular-nums font-medium text-ink">{money(Math.abs(stage.verdict.facts.gap))}</span>
+                Gap: <span className="tabular-nums font-medium text-ink">{money(Math.abs(stage.verdict.facts.gap))}</span> --
+                compare the line items above with your paper bill for anything missing or misread.
               </p>
             </div>
           )}
           {stage.verdict.outcome === "unexplained" && (
             <div className="rounded-xl bg-amber-soft p-5">
-              <p className="font-serif text-xl text-amber">Something on this bill needs clarifying.</p>
+              <p className="font-serif text-xl text-amber">
+                {stage.verdict.facts.disputedLines.length > 0
+                  ? `You flagged "${stage.verdict.facts.disputedLines[0].label}" (Rs ${money(
+                      stage.verdict.facts.disputedLines[0].amount
+                    )}) as unfamiliar.`
+                  : "You mentioned something about this bill that needs clarifying."}
+              </p>
             </div>
           )}
 
           <div className="receipt-edge mx-auto flex w-full max-w-[800px] flex-col gap-3 rounded-xl border border-line bg-card p-5 shadow-sm">
             <p>
               <strong>{stage.bill.provider}</strong> <span className="text-ink-muted">-- {stage.bill.billDate}</span>
+              {isSuspiciousBillDate(stage.bill.billDate) && (
+                <span className="ml-2 text-xs text-amber">⚠ Check this date -- it looks off.</span>
+              )}
             </p>
 
             <div className="flex flex-col divide-y divide-line">
@@ -1039,7 +1069,7 @@ export default function UploadPage() {
             <ChecksSummary checks={stage.checks} total={stage.bill.total} />
           </div>
 
-          {outcomeDraftsEmail(stage.verdict.outcome) && (
+          {verdictDraftsEmail(stage.verdict) && (
             <div className={card}>
               <p className="mb-2 font-medium">{stage.verdict.outcome === "confirmed_error" ? "Dispute email" : "Inquiry email"}</p>
               {draftingEmail && <p className="text-ink-muted">Drafting...</p>}

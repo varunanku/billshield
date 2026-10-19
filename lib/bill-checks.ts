@@ -50,19 +50,32 @@ export type StatementCheck = {
   issue: boolean; // |gap| > ROUNDING_TOLERANCE -- a real problem, not just rounding
 };
 
+export type RoundedTotalNote = {
+  exactAmount: number; // the balance line equal to billedSum -- the precise, unrounded figure
+  roundedTotal: number; // the other balance line -- exactAmount rounded to the nearest 1, 5 or 10, treated as the bill's real total
+  gap: number; // roundedTotal - exactAmount
+};
+
 export type BillChecks = {
   billedSum: number; // sum(charge) + sum(tax) - sum(discount) -- balance/subtotal/info lines are shown but never summed
-  arithmeticDifference: number; // billedSum - total
-  arithmeticIssue: boolean; // |arithmeticDifference| > EPSILON, suppressed when arithmeticCoveredByPayment or statement is set
-  arithmeticCoveredByPayment: boolean; // true: the payment check already explains the gap, don't also show the generic "don't add up" message
+  // The total actually used for every "vs total" comparison below: the
+  // printed `total` passed in, UNLESS roundedTotalNote is set, in which
+  // case the bill's own higher, round-number balance line is trusted
+  // instead (see detectRoundedTotalPair).
+  effectiveTotal: number;
+  roundedTotalNote: RoundedTotalNote | null;
+  arithmeticDifference: number; // billedSum - effectiveTotal
+  arithmeticIssue: boolean; // |arithmeticDifference| > ROUNDING_TOLERANCE, suppressed when arithmeticCoveredByPayment or statement is set
+  arithmeticCoveredByPayment: boolean; // true: a payment-role line exists, so the dedicated payment check (not this generic one) is the relevant lens
   payment: {
     amountPaid: number;
-    // billedSum PLUS any "outstanding/arrears/previous due"-labelled balance
-    // line -- on a payment receipt, that figure is what the payment amount
-    // is actually supposed to cover, not just the new charge alone.
-    coveredAmount: number;
-    signedDifference: number; // coveredAmount - amountPaid; positive = dispute (billed more than paid), negative = overpaid
-    verdict: "dispute" | "overpaid" | "even";
+    signedDifference: number; // billedSum - amountPaid; positive = dispute (billed more than paid), negative = overpaid
+    verdict: "dispute" | "overpaid" | "even"; // "even" within ROUNDING_TOLERANCE, not just floating-point EPSILON
+    // Mention-only, never changes verdict/sign above: an "outstanding" /
+    // "arrears" / "previous due" balance line whose amount matches the
+    // excess -- likely why the payment covered more than just this
+    // period's new charge, worth noting in the email, not a separate fact.
+    reconcilingBalanceLabel: string | null;
   } | null; // null when there's no payment-role line, OR when a statement check (opening line) supersedes it
   checkpoints: Checkpoint[]; // one per subtotal-role line, in document order (a duplicate subtotal under a second label is not a separate checkpoint)
   warnings: SuspiciousGapWarning[]; // a charge line that suspiciously equals (total - a subtotal)
@@ -72,7 +85,9 @@ export type BillChecks = {
 };
 
 export const EPSILON = 0.01; // floating-point rounding only, not a business tolerance
-export const ROUNDING_TOLERANCE = 1.0; // statement reconciliation (opening balance + period activity) tolerates up to this before it's flagged as a real issue
+// Business tolerance: a payment/arithmetic difference this small or
+// smaller is cosmetic rounding, never worth a verdict or a mention.
+export const ROUNDING_TOLERANCE = 1.0;
 
 export type PersistedLine = { label: string; amount: number; role: LineRole; unrecognized: boolean };
 
@@ -159,6 +174,29 @@ function detectTaxIncludedInPrice(
 
   const adjusted = lineItems.map((li) => (li.role === "tax" ? { ...li, role: "info" as LineRole } : li));
   return { lineItems: adjusted, note: "Tax appears to be included in the item price." };
+}
+
+// Some bills print both the exact summed amount payable and a second,
+// separately-rounded figure as two distinct balance lines (e.g. "Net
+// Amount Payable: 11457.81" alongside a headline "Total: 11460.00" rounded
+// to the nearest 10). That's cosmetic rounding, not a billing error --
+// detected deterministically: one balance line equals billedSum exactly,
+// and another balance line is that amount rounded to the nearest 1, 5 or
+// 10. When found, the rounded one is trusted as the bill's real total.
+function detectRoundedTotalPair(lineItems: BillLine[], billedSum: number): RoundedTotalNote | null {
+  const balanceLines = lineItems.filter((li) => li.role === "balance");
+  const exact = balanceLines.find((li) => Math.abs(li.amount - billedSum) <= EPSILON);
+  if (!exact) return null;
+
+  for (const increment of [1, 5, 10]) {
+    const rounded = Math.round(exact.amount / increment) * increment;
+    if (Math.abs(rounded - exact.amount) <= EPSILON) continue; // already a round number -- no pair to find
+    const candidate = balanceLines.find((li) => Math.abs(li.amount - rounded) <= EPSILON);
+    if (candidate) {
+      return { exactAmount: exact.amount, roundedTotal: candidate.amount, gap: candidate.amount - exact.amount };
+    }
+  }
+  return null;
 }
 
 // One checkpoint per subtotal-role line encountered, in document order: the
@@ -257,20 +295,24 @@ export function computeBillChecks(lineItems: BillLine[], total: number): BillChe
     sumByRole(effectiveLineItems, "tax") -
     sumByRole(effectiveLineItems, "discount");
 
-  const arithmeticDifference = billedSum - total;
-  let arithmeticIssue = Math.abs(arithmeticDifference) > EPSILON;
+  const roundedTotalNote = detectRoundedTotalPair(effectiveLineItems, billedSum);
+  const effectiveTotal = roundedTotalNote ? roundedTotalNote.roundedTotal : total;
+
+  const arithmeticDifference = billedSum - effectiveTotal;
+  // A detected rounded-total pair IS the explanation for this gap, however
+  // large the rounding increment (up to 10) made it -- never flag it as an
+  // issue on top of already explaining it.
+  let arithmeticIssue = roundedTotalNote ? false : Math.abs(arithmeticDifference) > ROUNDING_TOLERANCE;
   let arithmeticCoveredByPayment = false;
 
-  // A receipt's "outstanding"/"arrears"/"previous due" balance line isn't a
-  // separate thing still owed -- it's typically what the payment amount
-  // also covers, alongside the new charge (the real Airtel receipt: paid
-  // 12165.08 = advance rental 12023.96 + outstanding 141.12 exactly). Only
-  // lines actually labelled this way count -- an ordinary "balance" line
-  // with no such label isn't assumed to be covered by anything.
+  // A receipt's "outstanding"/"arrears"/"previous due" balance line is
+  // mentioned (never credited into the maths) when its amount matches the
+  // payment/billed excess -- likely why the payment covered more than just
+  // this period's new charge. billed = charge + tax - discount ONLY; an
+  // outstanding balance is not folded in, so a receipt where the payment
+  // exceeds the new charge by that exact amount is a real overpayment,
+  // not a reconciled "even" -- see lib/verdict.ts's dedicated payment branch.
   const RECONCILING_BALANCE_LABEL = /outstanding|arrear|previous.?(due|balance)/i;
-  const reconcilingBalanceSum = effectiveLineItems
-    .filter((li) => li.role === "balance" && RECONCILING_BALANCE_LABEL.test(li.label))
-    .reduce((s, li) => s + li.amount, 0);
 
   const paymentLines = effectiveLineItems.filter((li) => li.role === "payment");
   let payment =
@@ -278,19 +320,23 @@ export function computeBillChecks(lineItems: BillLine[], total: number): BillChe
       ? null
       : (() => {
           const amountPaid = paymentLines.reduce((s, li) => s + li.amount, 0);
-          const coveredAmount = billedSum + reconcilingBalanceSum;
-          const signedDifference = coveredAmount - amountPaid;
+          const signedDifference = billedSum - amountPaid;
           const verdict: "dispute" | "overpaid" | "even" =
-            signedDifference > EPSILON ? "dispute" : signedDifference < -EPSILON ? "overpaid" : "even";
-          return { amountPaid, coveredAmount, signedDifference, verdict };
+            signedDifference > ROUNDING_TOLERANCE ? "dispute" : signedDifference < -ROUNDING_TOLERANCE ? "overpaid" : "even";
+          const reconcilingBalance = effectiveLineItems.find(
+            (li) =>
+              li.role === "balance" &&
+              RECONCILING_BALANCE_LABEL.test(li.label) &&
+              Math.abs(li.amount - Math.abs(signedDifference)) <= EPSILON
+          );
+          return { amountPaid, signedDifference, verdict, reconcilingBalanceLabel: reconcilingBalance?.label ?? null };
         })();
 
-  // When the payment fully reconciles (including any outstanding/arrears
-  // line), that's the real explanation for this bill's printed total --
-  // the generic arithmetic check would otherwise separately flag a
-  // confusing "doesn't add up" using the narrower billedSum alone.
-  if (payment && payment.verdict === "even") {
-    arithmeticIssue = false;
+  // A payment-role line makes the dedicated payment check the relevant
+  // lens for this bill (a receipt), not the generic billedSum-vs-total
+  // comparison -- always suppress the generic one when payment is present,
+  // regardless of whether payment itself reconciled.
+  if (payment) {
     arithmeticCoveredByPayment = true;
   }
 
@@ -308,7 +354,7 @@ export function computeBillChecks(lineItems: BillLine[], total: number): BillChe
       sumByRole(effectiveLineItems, "tax") -
       sumByRole(effectiveLineItems, "discount") -
       sumByRole(effectiveLineItems, "payment");
-    const gap = expectedClosing - total;
+    const gap = expectedClosing - effectiveTotal;
     statement = { expectedClosing, gap, issue: Math.abs(gap) > ROUNDING_TOLERANCE };
     payment = null;
     arithmeticIssue = false;
@@ -317,6 +363,8 @@ export function computeBillChecks(lineItems: BillLine[], total: number): BillChe
 
   return {
     billedSum,
+    effectiveTotal,
+    roundedTotalNote,
     arithmeticDifference,
     arithmeticIssue,
     arithmeticCoveredByPayment,
