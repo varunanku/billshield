@@ -27,10 +27,22 @@ export const metadata: Metadata = {
   description: "Check your bill before you pay it.",
 };
 
+// Runs before first paint (blocking, as the first thing in <body>) so the
+// right theme is already on <html data-theme> before anything renders --
+// otherwise there'd be a flash of the wrong theme on every load. Reads a
+// saved choice (ThemeSwitcher writes it); first visit falls back to the
+// OS's own light/dark preference, per the brief. Wrapped in try/catch --
+// localStorage can throw (private browsing, blocked storage), and this
+// must never be what breaks the page.
+const THEME_BOOTSTRAP = `(function(){try{var t=localStorage.getItem("billshield-theme");var valid=["fresh","midnight","mint","sunrise"];if(!t||valid.indexOf(t)===-1){t=window.matchMedia("(prefers-color-scheme: dark)").matches?"midnight":"fresh";}document.documentElement.setAttribute("data-theme",t);}catch(e){}})();`;
+
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="en" className={`${inter.variable} ${geistMono.variable} ${fraunces.variable} h-full antialiased`}>
-      <body className="min-h-full flex flex-col font-sans bg-paper text-ink">{children}</body>
+      <body className="min-h-full flex flex-col font-sans bg-bg text-text">
+        <script dangerouslySetInnerHTML={{ __html: THEME_BOOTSTRAP }} />
+        {children}
+      </body>
     </html>
   );
 }

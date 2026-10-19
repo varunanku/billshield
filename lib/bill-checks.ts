@@ -106,6 +106,7 @@ export type BillChecks = {
   checkpoints: Checkpoint[]; // one per subtotal-role line, in document order (a duplicate subtotal under a second label is not a separate checkpoint)
   warnings: SuspiciousGapWarning[]; // a charge line that suspiciously equals (total - a subtotal)
   reclassifiedAsBalance: Reclassification[]; // charge/tax lines the code itself reclassified (label read as total/payable/due and the amount matched the printed total)
+  reclassifiedAsInfo: Reclassification[]; // tax lines reclassified to "info" (a "Total Tax" line restating what the other tax lines already sum to -- a summary, not an additional charge)
   taxIncludedNote: string | null; // set when tax lines were treated as already baked into the charge amounts and excluded from every sum/checkpoint
   statement: StatementCheck | null; // set only when an "opening" line exists; when set, payment is null and arithmeticIssue is false
 };
@@ -186,6 +187,30 @@ function reclassifyTotalLikeLines(
     ) {
       reclassified.push({ label: li.label, amount: li.amount });
       return { ...li, role: "balance" as LineRole };
+    }
+    return li;
+  });
+  return { lineItems: effective, reclassified };
+}
+
+// A tax line that's a SUMMARY of the other tax lines, not an additional
+// charge on top of them -- e.g. "IGST 29.44" printed alongside a separate
+// "Total Tax 29.44" restating the same figure (or "CGST 9 + SGST 9" next
+// to a "Total Tax 18" restating their sum). Detected the same
+// deterministic way as the total-like reclassification above: the label
+// looks like a running tax total, and the amount exactly matches what the
+// OTHER tax lines already sum to -- shown, but never summed again.
+const TOTAL_TAX_LABEL = /total\s*tax/i;
+
+function reclassifyDuplicateTaxSummary(lineItems: BillLine[]): { lineItems: BillLine[]; reclassified: Reclassification[] } {
+  const taxLines = lineItems.filter((li) => li.role === "tax");
+  const reclassified: Reclassification[] = [];
+  const effective = lineItems.map((li) => {
+    if (li.role !== "tax" || !TOTAL_TAX_LABEL.test(li.label)) return li;
+    const othersSum = taxLines.filter((t) => t !== li).reduce((s, t) => s + t.amount, 0);
+    if (othersSum > 0 && Math.abs(othersSum - li.amount) <= EPSILON) {
+      reclassified.push({ label: li.label, amount: li.amount });
+      return { ...li, role: "info" as LineRole };
     }
     return li;
   });
@@ -330,7 +355,12 @@ export function computeBillChecks(lineItems: BillLine[], total: number): BillChe
     lineItems,
     total
   );
-  const { lineItems: effectiveLineItems, note: taxIncludedNote } = detectTaxIncludedInPrice(afterReclassify, total);
+  const { lineItems: afterTaxSummaryReclassify, reclassified: reclassifiedAsInfo } =
+    reclassifyDuplicateTaxSummary(afterReclassify);
+  const { lineItems: effectiveLineItems, note: taxIncludedNote } = detectTaxIncludedInPrice(
+    afterTaxSummaryReclassify,
+    total
+  );
 
   const billedSum =
     sumByRole(effectiveLineItems, "charge") +
@@ -414,6 +444,7 @@ export function computeBillChecks(lineItems: BillLine[], total: number): BillChe
     checkpoints: computeCheckpoints(effectiveLineItems),
     warnings: computeSuspiciousGapWarnings(effectiveLineItems, total),
     reclassifiedAsBalance,
+    reclassifiedAsInfo,
     taxIncludedNote,
     statement,
   };

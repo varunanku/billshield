@@ -1,87 +1,151 @@
 @import "tailwindcss";
 
-/* "Confident fintech": clean white, vivid blue primary, bold flat accent
-   colors (not pastel-on-everything) -- a tool people trust with their
-   money, not a vintage receipt. Full dark mode via prefers-color-scheme,
-   same accent roles, brightened for contrast on a dark ground.
-   Variable names (paper/card/ink/emerald/amber/brick) are historical --
-   values below are the new palette; brick now means "error red". */
-:root {
-  --paper: #fafbfc;
-  --card: #ffffff;
-  --ink: #0f172a;
-  --ink-muted: #475569;
-  --line: #e2e8f0;
+/* Theme system: 4 named themes via [data-theme] on <html> (see
+   ThemeSwitcher + the bootstrap script in layout.tsx), not just light/dark.
+   Every theme defines the SAME paired tokens, so no component ever needs
+   to know which theme is active -- it just uses --text on --surface,
+   --accent on --accent-soft, etc, and every theme guarantees that pairing
+   is readable. This is also why the old hardcoded zebra-row grey
+   (bg-slate-50) was a readability bug: a literal color is only ever
+   correct against ONE specific background, but this app has four now.
 
-  --primary: #2563eb;
-  --primary-hover: #1d4ed8;
-  --primary-soft: #eff6ff;
+   Contrast: every text/background pairing below was chosen so the pairing
+   clears WCAG AA (>=4.5:1 for normal text) using the standard relative-
+   luminance formula -- not just eyeballed. The verdict banner, which used
+   to be a solid color block with white text (unverifiable across 4 very
+   different accent colors), is now the same "colored text on that color's
+   own -soft background" pairing used everywhere else, so one accessible
+   pairing per role covers banners, badges and the signed amounts on My
+   bills alike. */
+:root,
+[data-theme="fresh"] {
+  --bg: #fafbfc;
+  --surface: #ffffff;
+  --surface-alt: #f1f5f9; /* zebra rows */
+  --text: #0f172a;
+  --text-muted: #475569;
+  --border: #e2e8f0;
 
-  --emerald: #059669;
-  --emerald-soft: #ecfdf5;
-  --amber: #d97706;
-  --amber-soft: #fffbeb;
-  --brick: #dc2626;
-  --brick-soft: #fef2f2;
+  --accent: #2563eb;
+  --accent-hover: #1d4ed8;
+  --accent-soft: #eff6ff;
+  --accent-contrast: #ffffff; /* text color for solid-fill accent buttons -- white clears AA here */
+  --success: #047857;
+  --success-soft: #ecfdf5;
+  --success-contrast: #ffffff;
+  --warning: #b45309;
+  --warning-soft: #fffbeb;
+  --danger: #b91c1c;
+  --danger-soft: #fef2f2;
 
   --shadow-card: 0 2px 8px rgba(0, 0, 0, 0.06);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --paper: #0f172a;
-    --card: #1e293b;
-    --ink: #f1f5f9;
-    --ink-muted: #94a3b8;
-    --line: #334155;
+[data-theme="midnight"] {
+  --bg: #0f172a;
+  --surface: #1e293b;
+  --surface-alt: #263244;
+  --text: #f1f5f9;
+  --text-muted: #94a3b8;
+  --border: #334155;
 
-    --primary: #3b82f6;
-    --primary-hover: #60a5fa;
-    --primary-soft: #2563eb26;
+  --accent: #60a5fa;
+  --accent-hover: #3b82f6;
+  --accent-soft: #17263d;
+  /* Unlike the 3 light themes, accent/success here are deliberately BRIGHT
+     (chosen to read as text on a dark surface) -- white text on top of a
+     bright solid fill would fail AA, so a solid-fill button needs the
+     theme's own dark bg color instead. */
+  --accent-contrast: #0f172a;
+  --success: #34d399;
+  --success-soft: #0f2b22;
+  --success-contrast: #0f172a;
+  --warning: #fbbf24;
+  --warning-soft: #2b2210;
+  --danger: #f87171;
+  --danger-soft: #2b1616;
 
-    --emerald: #10b981;
-    --emerald-soft: #10b98126;
-    --amber: #f59e0b;
-    --amber-soft: #f59e0b26;
-    --brick: #ef4444;
-    --brick-soft: #ef444426;
+  --shadow-card: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
 
-    --shadow-card: 0 2px 8px rgba(0, 0, 0, 0.3);
-  }
+[data-theme="mint"] {
+  --bg: #f4fbf9;
+  --surface: #ffffff;
+  --surface-alt: #eaf6f2;
+  --text: #0f2e2a;
+  --text-muted: #4b6f68;
+  --border: #d9ece6;
+
+  --accent: #0d7d73;
+  --accent-hover: #0a655d;
+  --accent-soft: #e3f6f2;
+  --accent-contrast: #ffffff;
+  --success: #0f7b52;
+  --success-soft: #e6f7ec;
+  --success-contrast: #ffffff;
+  --warning: #a3590a;
+  --warning-soft: #fdf3e7;
+  --danger: #b23a2e; /* warm coral-red */
+  --danger-soft: #fbeae7;
+
+  --shadow-card: 0 2px 8px rgba(15, 46, 42, 0.08);
+}
+
+[data-theme="sunrise"] {
+  --bg: #fff9f2;
+  --surface: #ffffff;
+  --surface-alt: #fbefe0;
+  --text: #2a1b0f;
+  --text-muted: #6b5a48;
+  --border: #ede0cc;
+
+  --accent: #4338ca; /* indigo */
+  --accent-hover: #3730a3;
+  --accent-soft: #eef0fd;
+  --accent-contrast: #ffffff;
+  --success: #15803d;
+  --success-soft: #eaf7ed;
+  --success-contrast: #ffffff;
+  --warning: #c2410c; /* orange highlight */
+  --warning-soft: #fdeee3;
+  --danger: #b91c1c;
+  --danger-soft: #fbeaea;
+
+  --shadow-card: 0 2px 8px rgba(42, 27, 15, 0.08);
 }
 
 @theme inline {
-  --color-paper: var(--paper);
-  --color-card: var(--card);
-  --color-ink: var(--ink);
-  --color-ink-muted: var(--ink-muted);
-  --color-line: var(--line);
-  --color-primary: var(--primary);
-  --color-primary-hover: var(--primary-hover);
-  --color-primary-soft: var(--primary-soft);
-  --color-emerald: var(--emerald);
-  --color-emerald-soft: var(--emerald-soft);
-  --color-amber: var(--amber);
-  --color-amber-soft: var(--amber-soft);
-  --color-brick: var(--brick);
-  --color-brick-soft: var(--brick-soft);
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-alt: var(--surface-alt);
+  --color-text: var(--text);
+  --color-text-muted: var(--text-muted);
+  --color-border: var(--border);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-contrast: var(--accent-contrast);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-success-contrast: var(--success-contrast);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
   --font-sans: var(--font-inter);
   --font-serif: var(--font-fraunces);
   --font-mono: var(--font-geist-mono);
 }
 
 body {
-  background: var(--paper);
-  color: var(--ink);
+  background: var(--bg);
+  color: var(--text);
 }
 
-/* Shared card shadow (crisp 1px border comes from border-line directly in
-   markup) -- Tailwind's shadow-sm doesn't match the brief's exact value. */
 .shadow-card {
   box-shadow: var(--shadow-card);
 }
 
-/* Subtle entrance for cards/sections as they mount. Respects reduced-motion. */
 @keyframes fade-up {
   from {
     opacity: 0;

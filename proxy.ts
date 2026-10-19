@@ -33,8 +33,11 @@ export async function proxy(request: NextRequest) {
 
   const isApiRoute = request.nextUrl.pathname.startsWith("/api");
   const isLoginRoute = request.nextUrl.pathname.startsWith("/login");
+  // The email-confirmation link lands here while still signed out -- it's
+  // what establishes the session, so it can't itself require one.
+  const isAuthRoute = request.nextUrl.pathname.startsWith("/auth");
 
-  if (!user && !isApiRoute && !isLoginRoute) {
+  if (!user && !isApiRoute && !isLoginRoute && !isAuthRoute) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
     return NextResponse.redirect(url);

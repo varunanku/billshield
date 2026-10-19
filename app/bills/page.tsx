@@ -21,18 +21,18 @@ const VERDICT_LABELS: Record<string, string> = {
 
 // green/amber/red pill, same roles as the verdict banner on the main flow.
 const VERDICT_BADGE_CLASSES: Record<string, string> = {
-  clean: "bg-emerald-soft text-emerald",
-  confirmed_error: "bg-brick-soft text-brick",
-  cannot_verify: "bg-amber-soft text-amber",
-  unexplained: "bg-amber-soft text-amber",
+  clean: "bg-success-soft text-success",
+  confirmed_error: "bg-danger-soft text-danger",
+  cannot_verify: "bg-warning-soft text-warning",
+  unexplained: "bg-warning-soft text-warning",
 };
 
 function VerdictBadge({ outcome }: { outcome: string | null }) {
-  if (!outcome) return <span className="text-xs text-ink-muted">--</span>;
+  if (!outcome) return <span className="text-xs text-text-muted">--</span>;
   return (
     <span
       className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
-        VERDICT_BADGE_CLASSES[outcome] ?? "bg-line text-ink-muted"
+        VERDICT_BADGE_CLASSES[outcome] ?? "bg-border text-text-muted"
       }`}
     >
       {VERDICT_LABELS[outcome] ?? outcome}
@@ -43,10 +43,10 @@ function VerdictBadge({ outcome }: { outcome: string | null }) {
 // Provider "logo" stand-in: colored initials in a circle -- deterministic
 // color per provider name so the same provider always gets the same color.
 const INITIAL_CIRCLE_COLORS = [
-  "bg-primary-soft text-primary",
-  "bg-emerald-soft text-emerald",
-  "bg-amber-soft text-amber",
-  "bg-brick-soft text-brick",
+  "bg-accent-soft text-accent",
+  "bg-success-soft text-success",
+  "bg-warning-soft text-warning",
+  "bg-danger-soft text-danger",
 ];
 function initialsFor(name: string): string {
   const words = name.trim().split(/\s+/).filter(Boolean);
@@ -90,31 +90,31 @@ async function BillsList() {
   );
 
   if (groups.length === 0) {
-    return <p className="text-ink-muted">No bills yet -- upload one to see it here.</p>;
+    return <p className="text-text-muted">No bills yet -- upload one to see it here.</p>;
   }
 
   return (
     <div className="flex flex-col gap-6">
       {groups.map((g) => (
-        <section key={g.provider} className="animate-fade-up rounded-lg border border-line bg-card p-5 shadow-card">
+        <section key={g.provider} className="animate-fade-up rounded-lg border border-border bg-surface p-5 shadow-card">
           <h2 className="mb-3 flex items-center gap-2 font-bold">
             <ProviderAvatar provider={g.provider} />
-            {g.provider} <span className="font-normal text-ink-muted">({g.bills.length} bill{g.bills.length === 1 ? "" : "s"})</span>
+            {g.provider} <span className="font-normal text-text-muted">({g.bills.length} bill{g.bills.length === 1 ? "" : "s"})</span>
           </h2>
-          <div className="flex flex-col divide-y divide-line">
+          <div className="flex flex-col divide-y divide-border">
             {g.bills.map((b, i) => (
-              <div key={b.id} className={`flex flex-wrap items-center justify-between gap-x-4 gap-y-1 px-2 py-2 text-sm ${i % 2 === 1 ? "bg-slate-50" : ""}`}>
-                <span className="text-ink-muted">{b.billDate}</span>
+              <div key={b.id} className={`flex flex-wrap items-center justify-between gap-x-4 gap-y-1 px-2 py-2 text-sm ${i % 2 === 1 ? "bg-surface-alt" : ""}`}>
+                <span className="text-text-muted">{b.billDate}</span>
                 <span className="font-mono tabular-nums font-medium">Rs {money(b.total)}</span>
                 <VerdictBadge outcome={b.verdictOutcome} />
                 {b.changeVsPrevious !== null && (
-                  <span className={`text-xs ${b.changeVsPrevious > 0 ? "text-brick" : "text-emerald"}`}>
+                  <span className={`text-xs ${b.changeVsPrevious > 0 ? "text-danger" : "text-success"}`}>
                     {b.changeVsPrevious > 0 ? "+" : ""}
                     {money(b.changeVsPrevious)} vs previous
                   </span>
                 )}
                 {b.changeVsAverage !== null && (
-                  <span className="text-xs text-ink-muted">
+                  <span className="text-xs text-text-muted">
                     {b.changeVsAverage > 0 ? "+" : ""}
                     {money(b.changeVsAverage)} vs average
                   </span>
@@ -133,11 +133,11 @@ export default function BillsPage() {
     <main className="mx-auto w-full max-w-[960px] px-4 py-8 sm:px-6 sm:py-12">
       <div className="mb-6 flex items-center justify-between">
         <h1 className="text-2xl font-bold">My bills</h1>
-        <Link href="/" className="text-sm text-ink-muted transition-colors hover:text-ink">
+        <Link href="/" className="text-sm text-text-muted transition-colors hover:text-text">
           ← Back
         </Link>
       </div>
-      <Suspense fallback={<p className="text-ink-muted">Loading...</p>}>
+      <Suspense fallback={<p className="text-text-muted">Loading...</p>}>
         <BillsList />
       </Suspense>
     </main>

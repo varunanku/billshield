@@ -20,6 +20,7 @@ import { MAX_FOLLOWUP_MESSAGES, type FollowupBillContext, type FollowupReply, ty
 import type { TonePreset } from "@/lib/email-draft";
 import { isSuspiciousBillDate } from "@/lib/date-check";
 import { computeTaxBreakdown, summarizeTaxBreakdown, type CategoryRate } from "@/lib/gst";
+import { ThemeSwitcher } from "@/app/theme-switcher";
 
 type ExtractedBill = {
   provider: string | null;
@@ -123,14 +124,14 @@ const ROLE_LABELS: Record<LineRole, string> = {
 // opening/discount), matched to the role's real-world "weight" rather
 // than one color per role.
 const ROLE_BADGE_CLASSES: Record<LineRole, string> = {
-  charge: "bg-primary-soft text-primary",
-  tax: "bg-amber-soft text-amber",
-  payment: "bg-emerald-soft text-emerald",
-  discount: "bg-emerald-soft text-emerald",
-  balance: "bg-line text-ink-muted",
-  subtotal: "bg-line text-ink-muted",
-  info: "bg-line text-ink-muted",
-  opening: "bg-line text-ink-muted",
+  charge: "bg-accent-soft text-accent",
+  tax: "bg-warning-soft text-warning",
+  payment: "bg-success-soft text-success",
+  discount: "bg-success-soft text-success",
+  balance: "bg-border text-text-muted",
+  subtotal: "bg-border text-text-muted",
+  info: "bg-border text-text-muted",
+  opening: "bg-border text-text-muted",
 };
 
 function RoleBadge({ role }: { role: LineRole }) {
@@ -169,10 +170,10 @@ function ProgressSteps({ current }: { current: 1 | 2 | 3 }) {
               className={[
                 "flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold transition-colors",
                 done
-                  ? "bg-emerald text-white"
+                  ? "bg-success-soft text-success"
                   : active
-                  ? "bg-primary text-white animate-pulse"
-                  : "bg-card border border-line text-ink-muted",
+                  ? "bg-accent-soft text-accent animate-pulse"
+                  : "bg-surface border border-border text-text-muted",
               ].join(" ")}
             >
               {done ? (
@@ -183,9 +184,9 @@ function ProgressSteps({ current }: { current: 1 | 2 | 3 }) {
                 step
               )}
             </span>
-            <span className={active ? "font-bold text-ink" : "text-ink-muted"}>{label}</span>
+            <span className={active ? "font-bold text-text" : "text-text-muted"}>{label}</span>
             {i < steps.length - 1 && (
-              <span className={`mx-1 h-0.5 w-6 rounded-full transition-colors ${done ? "bg-emerald" : "bg-line"}`} aria-hidden />
+              <span className={`mx-1 h-0.5 w-6 rounded-full transition-colors ${done ? "bg-success" : "bg-border"}`} aria-hidden />
             )}
           </li>
         );
@@ -205,7 +206,7 @@ function PencilButton({ onClick, label }: { onClick: () => void; label: string }
       type="button"
       onClick={onClick}
       aria-label={label}
-      className="flex min-h-11 min-w-11 items-center justify-center rounded-full text-ink-muted transition-colors hover:bg-primary-soft hover:text-primary"
+      className="flex min-h-11 min-w-11 items-center justify-center rounded-full text-text-muted transition-colors hover:bg-accent-soft hover:text-accent"
     >
       ✎
     </button>
@@ -250,19 +251,19 @@ function CheckpointStamp({
   const offBy = Math.abs(checkpoint.gap) > EPSILON;
   if (!offBy) {
     return (
-      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-soft px-2 py-0.5 text-xs font-medium text-emerald">
+      <span className="inline-flex items-center gap-1 rounded-full bg-success-soft px-2 py-0.5 text-xs font-medium text-success">
         ✓ matched
       </span>
     );
   }
   return (
-    <span className="inline-flex flex-wrap items-center gap-1.5 rounded-full bg-amber-soft px-2 py-0.5 text-xs font-medium text-amber">
+    <span className="inline-flex flex-wrap items-center gap-1.5 rounded-full bg-warning-soft px-2 py-0.5 text-xs font-medium text-warning">
       ! check -- gap {money(checkpoint.gap)}
       {checkpoint.suggestion && onRemoveSuggestion && (
         <button
           type="button"
           onClick={() => onRemoveSuggestion(checkpoint.suggestion!.label, checkpoint.suggestion!.amount)}
-          className="rounded-full border border-amber/40 px-1.5 py-0 text-amber underline-offset-2 hover:underline"
+          className="rounded-full border border-warning/40 px-1.5 py-0 text-warning underline-offset-2 hover:underline"
         >
           remove &quot;{checkpoint.suggestion.label}&quot;
         </button>
@@ -281,46 +282,53 @@ function ChecksSummary({ checks, total }: { checks: BillChecks; total: number })
   return (
     <div className="mt-3 flex flex-col gap-2 text-sm">
       {checks.reclassifiedAsBalance.map((r, i) => (
-        <p key={i} className="text-amber">
+        <p key={i} className="text-warning">
           Note: treated &quot;{r.label}&quot; as the printed total, not a charge, since it matched the bill&apos;s own
           total ({money(r.amount)}).
         </p>
       ))}
 
-      {checks.taxIncludedNote && <p className="text-amber">Note: {checks.taxIncludedNote}</p>}
+      {checks.reclassifiedAsInfo.map((r, i) => (
+        <p key={i} className="text-warning">
+          Note: &quot;{r.label}&quot; ({money(r.amount)}) is a summary of the other tax lines, not an additional
+          charge.
+        </p>
+      ))}
+
+      {checks.taxIncludedNote && <p className="text-warning">Note: {checks.taxIncludedNote}</p>}
 
       {showGenericArithmetic && (
         <>
-          <p className="text-ink-muted">
-            Charge + tax − discount: <span className="font-mono tabular-nums text-ink">{money(checks.billedSum)}</span>
+          <p className="text-text-muted">
+            Charge + tax − discount: <span className="font-mono tabular-nums text-text">{money(checks.billedSum)}</span>
             {" vs printed total "}
-            <span className="font-mono tabular-nums text-ink">{money(total)}</span>
+            <span className="font-mono tabular-nums text-text">{money(total)}</span>
           </p>
           {checks.arithmeticIssue ? (
-            <p className="text-amber">
+            <p className="text-warning">
               These lines don&apos;t add up to the printed total, so a line may be missing or misread. Compare with
               your paper bill.
             </p>
           ) : (
-            <p className="text-emerald">✓ These lines add up to the printed total.</p>
+            <p className="text-success">✓ These lines add up to the printed total.</p>
           )}
         </>
       )}
 
       {checks.statement &&
         (checks.statement.issue ? (
-          <p className="text-amber">
+          <p className="text-warning">
             These don&apos;t add up to the printed total, so a line may be missing or misread. Compare with your
             paper bill.
           </p>
         ) : Math.abs(checks.statement.gap) > EPSILON ? (
-          <p className="text-emerald">✓ Matches within rounding.</p>
+          <p className="text-success">✓ Matches within rounding.</p>
         ) : (
-          <p className="text-emerald">✓ These add up to the printed total.</p>
+          <p className="text-success">✓ These add up to the printed total.</p>
         ))}
 
       {checks.warnings.map((w, i) => (
-        <p key={i} className="text-amber">
+        <p key={i} className="text-warning">
           Note: &quot;{w.lineLabel}&quot; ({money(w.amount)}) -- {w.message}
         </p>
       ))}
@@ -342,22 +350,22 @@ function ChecksSummary({ checks, total }: { checks: BillChecks; total: number })
 }
 
 const inputClasses =
-  "min-h-11 w-full rounded-lg border border-line bg-card px-3 py-2 text-ink outline-none transition-colors focus-visible:ring-2 focus-visible:ring-primary focus-visible:border-primary";
+  "min-h-11 w-full rounded-lg border border-border bg-surface px-3 py-2 text-text outline-none transition-colors focus-visible:ring-2 focus-visible:ring-accent focus-visible:border-accent";
 // Every button gets a visible pressed state (darker + a slight scale down)
 // on :active, on top of the hover/focus treatment -- not just a hover
 // effect, which touch devices never see anyway.
 const buttonPrimary =
-  "min-h-11 rounded-lg bg-primary px-4 py-2 font-medium text-white transition-all duration-150 hover:bg-primary-hover active:scale-[0.97] disabled:opacity-40 disabled:active:scale-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-paper";
+  "min-h-11 rounded-lg bg-accent px-4 py-2 font-medium text-accent-contrast transition-all duration-150 hover:bg-accent-hover active:scale-[0.97] disabled:opacity-40 disabled:active:scale-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg";
 // Reserved for the one action that's specifically a confirmation of
 // something already sent/done ("I've sent it") -- every other primary
 // action uses the vivid-blue buttonPrimary above.
 const buttonSuccess =
-  "min-h-11 rounded-lg bg-emerald px-4 py-2 font-medium text-white transition-all duration-150 hover:opacity-90 active:scale-[0.97] active:brightness-90 disabled:opacity-40 disabled:active:scale-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald focus-visible:ring-offset-2 focus-visible:ring-offset-paper";
+  "min-h-11 rounded-lg bg-success px-4 py-2 font-medium text-success-contrast transition-all duration-150 hover:opacity-90 active:scale-[0.97] active:brightness-90 disabled:opacity-40 disabled:active:scale-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-success focus-visible:ring-offset-2 focus-visible:ring-offset-bg";
 const buttonSecondary =
-  "min-h-11 rounded-lg border border-line px-4 py-2 font-medium text-ink transition-all duration-150 hover:bg-primary-soft hover:border-primary active:scale-[0.97] disabled:opacity-40 disabled:active:scale-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary";
+  "min-h-11 rounded-lg border border-border px-4 py-2 font-medium text-text transition-all duration-150 hover:bg-accent-soft hover:border-accent active:scale-[0.97] disabled:opacity-40 disabled:active:scale-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent";
 const buttonDestructive =
-  "min-h-11 rounded-lg px-2 text-sm text-ink-muted transition-colors hover:text-brick";
-const card = "rounded-lg border border-line bg-card p-5 shadow-card animate-fade-up";
+  "min-h-11 rounded-lg px-2 text-sm text-text-muted transition-colors hover:text-danger";
+const card = "rounded-lg border border-border bg-surface p-5 shadow-card animate-fade-up";
 
 export default function UploadPage() {
   const router = useRouter();
@@ -1009,10 +1017,10 @@ export default function UploadPage() {
       <div className="mb-6 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <svg viewBox="0 0 32 32" fill="none" className="h-7 w-7" aria-hidden>
-            <path d="M16 2.5 L28 7 V15.5 C28 23 22.5 27.5 16 29.5 C9.5 27.5 4 23 4 15.5 V7 Z" className="fill-primary" />
+            <path d="M16 2.5 L28 7 V15.5 C28 23 22.5 27.5 16 29.5 C9.5 27.5 4 23 4 15.5 V7 Z" className="fill-accent" />
             <path
               d="M11 16.2 L14.3 19.5 L21.2 11.8"
-              stroke="#ffffff"
+              stroke="var(--accent-contrast)"
               strokeWidth="2.4"
               strokeLinecap="round"
               strokeLinejoin="round"
@@ -1022,13 +1030,14 @@ export default function UploadPage() {
           <h1 className="font-serif text-2xl">BillShield</h1>
         </div>
         <div className="flex items-center gap-3">
-          <a href="/bills" className="text-sm text-ink-muted transition-colors hover:text-ink">
+          <a href="/bills" className="text-sm text-text-muted transition-colors hover:text-text">
             My bills
           </a>
-          {userEmail && <span className="text-sm text-ink-muted">{userEmail}</span>}
-          <button onClick={handleSignOut} className="text-sm text-ink-muted transition-colors hover:text-ink">
+          {userEmail && <span className="text-sm text-text-muted">{userEmail}</span>}
+          <button onClick={handleSignOut} className="text-sm text-text-muted transition-colors hover:text-text">
             Sign out
           </button>
+          <ThemeSwitcher />
         </div>
       </div>
 
@@ -1036,7 +1045,7 @@ export default function UploadPage() {
 
       {stage.name === "upload" && (
         <>
-          <p className="mb-3 rounded-md bg-amber-soft px-3 py-2 text-sm text-amber">
+          <p className="mb-3 rounded-md bg-warning-soft px-3 py-2 text-sm text-warning">
             Your bill image is read by an AI provider (Groq) to pull out the line items. Please mask your name,
             address, phone number and account number before uploading -- we also run an automatic backstop, but
             masking it yourself first is safer.
@@ -1054,14 +1063,14 @@ export default function UploadPage() {
                 handleFileSelected(e.dataTransfer.files?.[0] ?? null);
               }}
               className={[
-                "flex min-h-48 cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed border-primary px-4 py-10 text-center transition-colors",
-                isDraggingOver ? "bg-primary-soft" : "bg-card hover:bg-primary-soft",
+                "flex min-h-48 cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed border-accent px-4 py-10 text-center transition-colors",
+                isDraggingOver ? "bg-accent-soft" : "bg-surface hover:bg-accent-soft",
               ].join(" ")}
             >
               <svg
                 viewBox="0 0 24 24"
                 fill="none"
-                className={`h-8 w-8 text-primary ${isDraggingOver ? "animate-pulse" : ""}`}
+                className={`h-8 w-8 text-accent ${isDraggingOver ? "animate-pulse" : ""}`}
                 aria-hidden
               >
                 <path
@@ -1073,8 +1082,8 @@ export default function UploadPage() {
                 />
               </svg>
               <p className="font-medium">{file ? file.name : "Drop your bill here, or click to choose a file"}</p>
-              <p className="text-sm text-ink-muted">JPEG, PNG, WEBP or PDF (a screenshot works too)</p>
-              <p className="text-xs text-ink-muted">HEIC photos aren&apos;t supported yet.</p>
+              <p className="text-sm text-text-muted">JPEG, PNG, WEBP or PDF (a screenshot works too)</p>
+              <p className="text-xs text-text-muted">HEIC photos aren&apos;t supported yet.</p>
               <input
                 type="file"
                 accept="image/jpeg,image/png,image/webp,application/pdf"
@@ -1089,25 +1098,25 @@ export default function UploadPage() {
         </>
       )}
 
-      {stage.name === "uploading" && <p className="py-6 text-center text-ink-muted">Uploading...</p>}
+      {stage.name === "uploading" && <p className="py-6 text-center text-text-muted">Uploading...</p>}
       {stage.name === "extracting" && (
         <div className="flex flex-col items-center gap-3 py-10">
-          <div className="h-8 w-8 animate-spin rounded-full border-2 border-line border-t-primary" aria-hidden />
-          <p className="text-ink-muted">Reading your bill...</p>
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-border border-t-accent" aria-hidden />
+          <p className="text-text-muted">Reading your bill...</p>
         </div>
       )}
 
       {stage.name === "reviewing" && (
-        <section className="mx-auto mt-2 flex w-full max-w-[800px] flex-col gap-4 rounded-lg border border-line bg-card p-5 shadow-card animate-fade-up">
-          <button type="button" onClick={backToUpload} className="self-start text-sm text-ink-muted transition-colors hover:text-ink">
+        <section className="mx-auto mt-2 flex w-full max-w-[800px] flex-col gap-4 rounded-lg border border-border bg-surface p-5 shadow-card animate-fade-up">
+          <button type="button" onClick={backToUpload} className="self-start text-sm text-text-muted transition-colors hover:text-text">
             ← Back to upload
           </button>
-          {stage.notice && <p className="rounded-md bg-amber-soft px-3 py-2 text-sm text-amber">{stage.notice}</p>}
-          <p className="text-sm text-ink-muted">Check this against your paper bill and fix anything that&apos;s wrong.</p>
+          {stage.notice && <p className="rounded-md bg-warning-soft px-3 py-2 text-sm text-warning">{stage.notice}</p>}
+          <p className="text-sm text-text-muted">Check this against your paper bill and fix anything that&apos;s wrong.</p>
 
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="flex flex-col gap-1 text-sm">
-              <span className="text-ink-muted">Provider</span>
+              <span className="text-text-muted">Provider</span>
               {editingField === "provider" ? (
                 <input
                   value={provider}
@@ -1122,10 +1131,10 @@ export default function UploadPage() {
                   <PencilButton label="Edit provider" onClick={() => setEditingField("provider")} />
                 </div>
               )}
-              {providerLegalName && <span className="text-xs text-ink-muted">Billing entity: {providerLegalName}</span>}
+              {providerLegalName && <span className="text-xs text-text-muted">Billing entity: {providerLegalName}</span>}
             </div>
             <div className="flex flex-col gap-1 text-sm">
-              <span className="text-ink-muted">Bill date</span>
+              <span className="text-text-muted">Bill date</span>
               {editingField === "billDate" ? (
                 <input
                   value={billDate}
@@ -1142,12 +1151,12 @@ export default function UploadPage() {
                 </div>
               )}
               {isSuspiciousBillDate(billDate) && (
-                <span className="text-xs text-amber">⚠ Check this date -- it looks off.</span>
+                <span className="text-xs text-warning">⚠ Check this date -- it looks off.</span>
               )}
             </div>
           </div>
           <div className="flex flex-col gap-1 text-sm">
-            <span className="text-ink-muted">Printed total</span>
+            <span className="text-text-muted">Printed total</span>
             {editingField === "total" ? (
               <input
                 value={total}
@@ -1164,10 +1173,10 @@ export default function UploadPage() {
             )}
           </div>
           {total.trim() !== "" && parsedTotalValue === null && (
-            <p className="text-sm text-brick">Enter a valid number, e.g. 1234.56 or 1,234.56.</p>
+            <p className="text-sm text-danger">Enter a valid number, e.g. 1234.56 or 1,234.56.</p>
           )}
 
-          <div className="flex flex-col divide-y divide-line">
+          <div className="flex flex-col divide-y divide-border">
             {lines.map((line, i) => {
               const amountInvalid = line.amount.trim() !== "" && parseAmountInput(line.amount) === null;
               const checkpoint = line.role === "subtotal" ? checkpointFor(livePreview, line.label) : undefined;
@@ -1175,12 +1184,12 @@ export default function UploadPage() {
 
               if (!isEditingLine) {
                 return (
-                  <div key={i} className={`flex items-center justify-between gap-2 px-2 py-3 ${i % 2 === 1 ? "bg-slate-50" : ""}`}>
+                  <div key={i} className={`flex items-center justify-between gap-2 px-2 py-3 ${i % 2 === 1 ? "bg-surface-alt" : ""}`}>
                     <div className="flex flex-1 flex-wrap items-center gap-x-2">
                       <span>{line.label || "(no label)"}</span>
                       <RoleBadge role={line.role} />
                       {line.unrecognized && (
-                        <span className="rounded-full bg-amber-soft px-2 py-0.5 text-xs font-medium text-amber">unfamiliar</span>
+                        <span className="rounded-full bg-warning-soft px-2 py-0.5 text-xs font-medium text-warning">unfamiliar</span>
                       )}
                     </div>
                     <div className="flex items-center gap-2">
@@ -1221,8 +1230,8 @@ export default function UploadPage() {
                     />
                     {checkpoint && <CheckpointStamp checkpoint={checkpoint} onRemoveSuggestion={removeLineByLabelAmount} />}
                   </div>
-                  {amountInvalid && <p className="text-xs text-brick sm:hidden">Enter a valid number.</p>}
-                  <label className="flex min-h-11 items-center gap-1.5 text-xs text-ink-muted">
+                  {amountInvalid && <p className="text-xs text-danger sm:hidden">Enter a valid number.</p>}
+                  <label className="flex min-h-11 items-center gap-1.5 text-xs text-text-muted">
                     <input
                       type="checkbox"
                       checked={line.unrecognized ?? false}
@@ -1254,18 +1263,18 @@ export default function UploadPage() {
             <button
               type="button"
               onClick={() => setShowAddLine(true)}
-              className="self-start text-sm text-ink-muted underline-offset-2 transition-colors hover:text-ink hover:underline"
+              className="self-start text-sm text-text-muted underline-offset-2 transition-colors hover:text-text hover:underline"
             >
               Something missing?
             </button>
           )}
 
-          {taxSummary && <p className="text-sm text-ink-muted">{taxSummary}</p>}
+          {taxSummary && <p className="text-sm text-text-muted">{taxSummary}</p>}
 
           <ChecksSummary checks={livePreview} total={parsedTotal} />
 
-          <div className="rounded-lg border border-line p-4">
-            <p className="mb-2 font-bold">What were you promised? <span className="font-normal text-ink-muted">(optional)</span></p>
+          <div className="rounded-lg border border-border p-4">
+            <p className="mb-2 font-bold">What were you promised? <span className="font-normal text-text-muted">(optional)</span></p>
             <div className="flex flex-col gap-3">
               <label className="flex flex-col gap-1 text-sm">
                 Plan or description
@@ -1295,7 +1304,7 @@ export default function UploadPage() {
           >
             {isConfirming && (
               <span
-                className="h-4 w-4 animate-spin rounded-full border-2 border-paper/40 border-t-paper"
+                className="h-4 w-4 animate-spin rounded-full border-2 border-accent-contrast/40 border-t-accent-contrast"
                 aria-hidden
               />
             )}
@@ -1306,20 +1315,20 @@ export default function UploadPage() {
 
       {stage.name === "done" && (
         <section className="mt-2 flex flex-col gap-6">
-          <button type="button" onClick={backToReview} className="self-start text-sm text-ink-muted transition-colors hover:text-ink">
+          <button type="button" onClick={backToReview} className="self-start text-sm text-text-muted transition-colors hover:text-text">
             ← Back to review
           </button>
 
           {stage.verdict.outcome === "clean" && (
-            <div className="flex items-start gap-3 rounded-lg bg-emerald p-5 text-white animate-fade-up">
+            <div className="flex items-start gap-3 rounded-lg border-l-4 border-success bg-success-soft p-5 text-success animate-fade-up">
               <ShieldCheckIcon className="mt-1 h-7 w-7 shrink-0" />
               <div>
                 <p className="text-[28px] font-bold leading-tight">Your bill checks out.</p>
-                <p className="mt-1 text-white/90">
+                <p className="mt-1 text-text">
                   Reconciled total: <span className="font-mono tabular-nums font-medium">{money(stage.verdict.reconciledTotal)}</span>
                 </p>
                 {stage.verdict.roundingNote && (
-                  <p className="mt-1 text-sm text-white/80">
+                  <p className="mt-1 text-sm text-text-muted">
                     Rs {money(stage.verdict.roundingNote.gap)} is the bill&apos;s rounding to Rs{" "}
                     {money(stage.verdict.roundingNote.roundedTotal)}.
                   </p>
@@ -1328,7 +1337,7 @@ export default function UploadPage() {
             </div>
           )}
           {stage.verdict.outcome === "confirmed_error" && (
-            <div className="flex items-start gap-3 rounded-lg bg-brick p-5 text-white animate-fade-up">
+            <div className="flex items-start gap-3 rounded-lg border-l-4 border-danger bg-danger-soft p-5 text-danger animate-fade-up">
               <XCircleIcon className="mt-1 h-7 w-7 shrink-0" />
               <div>
                 <p className="text-[28px] font-bold leading-tight">
@@ -1341,7 +1350,7 @@ export default function UploadPage() {
                     : `Rs ${money(Math.abs(stage.verdict.facts.gap))} on this bill doesn't add up.`}
                 </p>
                 {stage.verdict.facts.reconcilingBalanceLabel && (
-                  <p className="mt-1 text-sm text-white/80">
+                  <p className="mt-1 text-sm text-text-muted">
                     This matches the &quot;{stage.verdict.facts.reconcilingBalanceLabel}&quot; line on your bill.
                   </p>
                 )}
@@ -1349,11 +1358,11 @@ export default function UploadPage() {
             </div>
           )}
           {stage.verdict.outcome === "cannot_verify" && (
-            <div className="flex items-start gap-3 rounded-lg bg-amber p-5 text-ink animate-fade-up">
+            <div className="flex items-start gap-3 rounded-lg border-l-4 border-warning bg-warning-soft p-5 text-warning animate-fade-up">
               <AlertTriangleIcon className="mt-1 h-7 w-7 shrink-0" />
               <div>
                 <p className="text-[28px] font-bold leading-tight">We couldn&apos;t read every line of this bill.</p>
-                <p className="mt-1">
+                <p className="mt-1 text-text">
                   Gap: <span className="font-mono tabular-nums font-medium">{money(Math.abs(stage.verdict.facts.gap))}</span> --
                   compare the line items above with your paper bill for anything missing or misread.
                 </p>
@@ -1361,7 +1370,7 @@ export default function UploadPage() {
             </div>
           )}
           {stage.verdict.outcome === "unexplained" && (
-            <div className="flex items-start gap-3 rounded-lg bg-amber p-5 text-ink animate-fade-up">
+            <div className="flex items-start gap-3 rounded-lg border-l-4 border-warning bg-warning-soft p-5 text-warning animate-fade-up">
               <AlertTriangleIcon className="mt-1 h-7 w-7 shrink-0" />
               <p className="text-[28px] font-bold leading-tight">
                 {stage.verdict.facts.disputedLines.length > 0
@@ -1373,19 +1382,19 @@ export default function UploadPage() {
             </div>
           )}
 
-          <div className="mx-auto flex w-full max-w-[800px] flex-col gap-3 rounded-lg border border-line bg-card p-5 shadow-card animate-fade-up">
+          <div className="mx-auto flex w-full max-w-[800px] flex-col gap-3 rounded-lg border border-border bg-surface p-5 shadow-card animate-fade-up">
             <p>
-              <strong className="font-bold">{stage.bill.provider}</strong> <span className="text-ink-muted">-- {stage.bill.billDate}</span>
+              <strong className="font-bold">{stage.bill.provider}</strong> <span className="text-text-muted">-- {stage.bill.billDate}</span>
               {isSuspiciousBillDate(stage.bill.billDate) && (
-                <span className="ml-2 text-xs text-amber">⚠ Check this date -- it looks off.</span>
+                <span className="ml-2 text-xs text-warning">⚠ Check this date -- it looks off.</span>
               )}
             </p>
 
-            <div className="flex flex-col divide-y divide-line">
+            <div className="flex flex-col divide-y divide-border">
               {stage.bill.lineItems.map((li, i) => {
                 const checkpoint = li.role === "subtotal" ? checkpointFor(stage.checks, li.label) : undefined;
                 return (
-                  <div key={i} className={`flex items-center justify-between gap-2 px-2 py-2 ${i % 2 === 1 ? "bg-slate-50" : ""}`}>
+                  <div key={i} className={`flex items-center justify-between gap-2 px-2 py-2 ${i % 2 === 1 ? "bg-surface-alt" : ""}`}>
                     <div className="flex flex-wrap items-center gap-2">
                       <span>{li.label}</span>
                       <RoleBadge role={li.role} />
@@ -1405,7 +1414,7 @@ export default function UploadPage() {
 
             {(() => {
               const summary = summarizeTaxBreakdown(computeTaxBreakdown(stage.bill.lineItems, extraFields.category, categoryRates));
-              return summary && <p className="text-sm text-ink-muted">{summary}</p>;
+              return summary && <p className="text-sm text-text-muted">{summary}</p>;
             })()}
 
             <ChecksSummary checks={stage.checks} total={stage.bill.total} />
@@ -1414,8 +1423,8 @@ export default function UploadPage() {
           {verdictDraftsEmail(stage.verdict) && (
             <div className={card}>
               <p className="mb-2 font-bold">{stage.verdict.outcome === "confirmed_error" ? "Dispute email" : "Inquiry email"}</p>
-              {draftingEmail && <p className="text-ink-muted">Drafting...</p>}
-              {emailError && <p className="text-brick">{emailError}</p>}
+              {draftingEmail && <p className="text-text-muted">Drafting...</p>}
+              {emailError && <p className="text-danger">{emailError}</p>}
               {emailDraft && (
                 <div className="flex flex-col gap-3">
                   <label className="flex flex-col gap-1 text-sm">
@@ -1449,7 +1458,7 @@ export default function UploadPage() {
                     </button>
                   </div>
 
-                  <div className="flex flex-wrap items-center gap-2 border-t border-line pt-3">
+                  <div className="flex flex-wrap items-center gap-2 border-t border-border pt-3">
                     <label className="flex items-center gap-2 text-sm">
                       Tone
                       <select
@@ -1469,7 +1478,7 @@ export default function UploadPage() {
                       type="button"
                       onClick={handleRegenerate}
                       disabled={regenerating}
-                      className={`${buttonSecondary} border-primary text-primary`}
+                      className={`${buttonSecondary} border-accent text-accent`}
                     >
                       {regenerating ? "Regenerating..." : "Regenerate"}
                     </button>
@@ -1489,7 +1498,7 @@ export default function UploadPage() {
                       <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
                         <p
                           className={`max-w-[85%] rounded-lg px-3 py-2 text-sm ${
-                            m.role === "user" ? "bg-primary text-white" : "bg-slate-100 text-ink"
+                            m.role === "user" ? "bg-accent-soft text-accent" : "bg-surface-alt text-text"
                           }`}
                         >
                           {m.content}
@@ -1498,9 +1507,9 @@ export default function UploadPage() {
                     );
                   }
                   return (
-                    <div key={i} className="flex flex-col gap-2 rounded-lg border border-amber/40 bg-amber-soft p-3 text-sm">
+                    <div key={i} className="flex flex-col gap-2 rounded-lg border border-warning/40 bg-warning-soft p-3 text-sm">
                       <p>{describeCorrection(m.correction, stage.bill)}</p>
-                      {m.correction.reason && <p className="text-xs text-ink-muted">{m.correction.reason}</p>}
+                      {m.correction.reason && <p className="text-xs text-text-muted">{m.correction.reason}</p>}
                       {m.status === "pending" ? (
                         <div className="flex gap-2">
                           <button
@@ -1521,7 +1530,7 @@ export default function UploadPage() {
                           </button>
                         </div>
                       ) : (
-                        <p className="text-xs font-medium text-ink-muted">
+                        <p className="text-xs font-medium text-text-muted">
                           {m.status === "applied" ? "✓ Applied" : "Dismissed"}
                         </p>
                       )}
@@ -1530,14 +1539,14 @@ export default function UploadPage() {
                 })}
                 {chatSending && (
                   <div className="flex justify-start">
-                    <div className="flex max-w-[85%] items-center gap-2 rounded-lg bg-slate-100 px-3 py-2 text-sm text-ink-muted">
+                    <div className="flex max-w-[85%] items-center gap-2 rounded-lg bg-surface-alt px-3 py-2 text-sm text-text-muted">
                       {chatBusyRetrying ? (
                         "Busy -- retrying..."
                       ) : (
                         <span className="flex items-center gap-1" aria-label="Thinking">
-                          <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-ink-muted [animation-delay:-0.3s]" />
-                          <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-ink-muted [animation-delay:-0.15s]" />
-                          <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-ink-muted" />
+                          <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-text-muted [animation-delay:-0.3s]" />
+                          <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-text-muted [animation-delay:-0.15s]" />
+                          <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-text-muted" />
                         </span>
                       )}
                     </div>
@@ -1545,9 +1554,9 @@ export default function UploadPage() {
                 )}
               </div>
             )}
-            {chatError && <p className="mb-2 text-sm text-brick">{chatError}</p>}
+            {chatError && <p className="mb-2 text-sm text-danger">{chatError}</p>}
             {chatLimitReached ? (
-              <p className="text-sm text-ink-muted">You&apos;ve reached the {MAX_FOLLOWUP_MESSAGES}-question limit for this bill.</p>
+              <p className="text-sm text-text-muted">You&apos;ve reached the {MAX_FOLLOWUP_MESSAGES}-question limit for this bill.</p>
             ) : (
               <div className="flex gap-2">
                 <input
@@ -1583,10 +1592,10 @@ export default function UploadPage() {
 
       {stage.name === "error" && (
         <section className={`${card} mt-2 flex flex-col gap-3`}>
-          {stage.notice && <p className="rounded-md bg-amber-soft px-3 py-2 text-sm text-amber">{stage.notice}</p>}
-          <p className="text-brick">{stage.message}</p>
+          {stage.notice && <p className="rounded-md bg-warning-soft px-3 py-2 text-sm text-warning">{stage.notice}</p>}
+          <p className="text-danger">{stage.message}</p>
           {retryCountdown !== null && retryCountdown > 0 ? (
-            <p className="text-sm text-ink-muted">Try again in {retryCountdown}s...</p>
+            <p className="text-sm text-text-muted">Try again in {retryCountdown}s...</p>
           ) : uploadedPath && stage.retryAfterSeconds !== undefined ? (
             <button onClick={retryExtraction} className={buttonPrimary}>
               Try again
