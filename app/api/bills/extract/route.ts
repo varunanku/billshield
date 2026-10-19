@@ -3,7 +3,14 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isValidOwnedPath } from "@/lib/storage-paths";
 import { pdfToPngImages } from "@/lib/pdf-to-images";
-import { extractBillFromImages, type ExtractedBill, type ImageInput } from "@/lib/groq";
+import { extractBillFromImages as extractWithGroq, type ExtractedBill, type ImageInput } from "@/lib/groq";
+import { extractBillFromImages as extractWithGemini } from "@/lib/gemini";
+
+// Gemini accepts PDF bytes directly (no rasterizing, no page cap), so only
+// the Groq path needs pdfToPngImages. Default to Gemini; set
+// EXTRACTION_PROVIDER=groq to use the original path instead.
+const USE_GROQ = process.env.EXTRACTION_PROVIDER === "groq";
+const extractBillFromImages = USE_GROQ ? extractWithGroq : extractWithGemini;
 
 export const maxDuration = 60; // vision call + PDF rendering can take a few seconds; lower this if your Vercel plan caps it.
 
@@ -98,7 +105,7 @@ export async function POST(request: Request) {
   let images: ImageInput[];
   let notice: string | null = null;
 
-  if (isPdf) {
+  if (isPdf && USE_GROQ) {
     let rendered;
     try {
       rendered = pdfToPngImages(bytes, MAX_PDF_PAGES);
@@ -113,6 +120,8 @@ export async function POST(request: Request) {
       notice = `This PDF has ${rendered.totalPages} pages; only the first ${MAX_PDF_PAGES} were read.`;
     }
   } else {
+    // Gemini takes the raw PDF (or image) bytes directly -- every page of a
+    // multi-page PDF goes through inline, no rasterizing or page cap.
     images = [{ bytes, mimeType }];
   }
 
@@ -135,7 +144,7 @@ export async function POST(request: Request) {
   }
 
   if (!extraction.ok) {
-    console.error("Groq extraction failed:", extraction.detail);
+    console.error(`${USE_GROQ ? "Groq" : "Gemini"} extraction failed:`, extraction.detail);
     return json(
       {
         success: false,
