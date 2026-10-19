@@ -8,8 +8,14 @@
 -- back directly. Existing rows get role = null (not reconstructable
 -- retroactively) -- they still render fine, they just can't be corrected
 -- via chat until re-uploaded.
+--
+-- Idempotent: safe to run again even if already applied.
+begin;
+
 alter table public.line_items
   add column if not exists role text;
 
 comment on column public.line_items.role is
   'charge/tax/discount/payment, as classified at confirm time -- null for rows saved before this column existed.';
+
+commit;

@@ -4,8 +4,14 @@
 -- requires. No new table, no RLS change needed: ownership already follows
 -- bill_id via the existing policies, which key off the row, not the column
 -- list, and the existing grants are table-level.
+--
+-- Idempotent: safe to run again even if already applied.
+begin;
+
 alter table public.promises
   add column if not exists promised_amount numeric(12,2);
 
 comment on column public.promises.promised_amount is
   'What the user says they were promised they''d pay, if they gave a number. Optional -- a promise can be a plain statement with no comparable figure, in which case the verdict can''t numerically compare it and falls back to the unexplained/inquiry outcome instead of confirmed_error.';
+
+commit;

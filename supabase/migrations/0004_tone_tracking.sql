@@ -5,6 +5,10 @@
 -- unused until now) is exactly the slot for which of the 6 style presets
 -- (polite/firm/formal/brief/friendly/escalation) was used. Reusing it
 -- instead of adding a second, confusingly-named tone column.
+--
+-- Idempotent: safe to run again even if already applied.
+begin;
+
 alter table public.messages
   add column if not exists version integer not null default 1,
   add column if not exists is_default_tone boolean not null default true,
@@ -24,3 +28,5 @@ comment on column public.messages.edited_before_send is
 -- (see 0001's comments), so this one explicit, read-only grant is what
 -- lets that script run at all.
 grant select on public.messages to service_role;
+
+commit;
