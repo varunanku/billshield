@@ -11,7 +11,7 @@ import {
   type FollowupReply,
 } from "@/lib/followup";
 import { computeHistoryQuery } from "@/lib/history";
-import { computeEffectiveTaxRates, findMatchingRate, buildGstAddendum } from "@/lib/gst";
+import { computeTaxBreakdown, findMatchingRate, buildTaxBreakdownAddendum } from "@/lib/gst";
 import { answerFollowupQuestion as askGroq, type ChatResult } from "@/lib/groq";
 import { answerFollowupQuestion as askGemini } from "@/lib/gemini";
 import { USE_GROQ } from "@/lib/provider";
@@ -115,21 +115,22 @@ export async function POST(request: Request, routeContext: { params: Promise<{ i
     }));
     history.push({ role: "user", content: question });
 
-    // GST reference (Phase 4): the rate(s) this bill's own tax lines work
-    // out to, computed in code, plus any matching seeded reference rate --
-    // never the model's own say-so on what the rate should be.
-    const effectiveTaxRates = computeEffectiveTaxRates(
-      context.lineItems.map((li) => ({ label: li.label, amount: li.amount, role: li.role }))
-    );
+    // Tax breakdown (Phase 4): each tax line classified (CGST+SGST pair,
+    // IGST, foreign VAT, electricity duty, ...) and its effective rate
+    // computed in code, compared against any matching seeded reference
+    // rate -- never the model's own say-so on what the rate should be.
+    const lineItems = context.lineItems.map((li) => ({ label: li.label, amount: li.amount, role: li.role }));
     let gstAddendum = "";
-    if (effectiveTaxRates.length > 0) {
+    const hasTaxLines = lineItems.some((li) => li.role === "tax");
+    if (hasTaxLines) {
       const { data: rateRows } = await supabase.from("category_rates").select("*").eq("category", bill.category ?? "");
+      const breakdown = computeTaxBreakdown(lineItems, bill.category, rateRows ?? []);
       const matchingRate = findMatchingRate(
         rateRows ?? [],
         bill.category,
-        context.lineItems.map((li) => li.label)
+        lineItems.map((li) => li.label)
       );
-      gstAddendum = buildGstAddendum(effectiveTaxRates, matchingRate);
+      gstAddendum = buildTaxBreakdownAddendum(breakdown, matchingRate);
     }
 
     const systemPrompt = buildFollowupSystemPrompt(context) + gstAddendum;

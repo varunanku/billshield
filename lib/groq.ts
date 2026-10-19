@@ -73,7 +73,13 @@ a similar label does have a printed amount.
 
 "role" must be exactly one of: "charge", "tax", "discount", "payment", "balance", "subtotal", "info", "opening".
 - "charge": a fee or service charge that is part of what's owed.
-- "tax": a GST/tax line.
+- "tax": a GST/tax line -- CGST, SGST, UTGST, IGST, VAT, Sales Tax,
+  Electricity Tax/Duty, Service Tax, Cess, or anything else that's clearly
+  a tax. Transcribe the printed label EXACTLY as it appears (e.g. "CGST"
+  stays "CGST", "SGST" stays "SGST") -- never merge two separately printed
+  tax lines into one, never rename one tax label to another, and never
+  combine them into a single "GST" or "Tax" line even if that would be
+  simpler. Each distinct printed tax line is its own "tax" line item.
 - "discount": an amount subtracted or credited, reducing what's owed (not a tax).
 - "payment": an amount actually paid or received (e.g. "Paid Amount", "Amount Received").
 - "balance": an outstanding, due, or credit balance (e.g. "Outstanding Amount", "Balance Due"). A

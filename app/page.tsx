@@ -19,6 +19,7 @@ import { shouldDraftEmail, type Verdict } from "@/lib/verdict";
 import { MAX_FOLLOWUP_MESSAGES, type FollowupBillContext, type FollowupReply, type Correction } from "@/lib/followup";
 import type { TonePreset } from "@/lib/email-draft";
 import { isSuspiciousBillDate } from "@/lib/date-check";
+import { computeTaxBreakdown, summarizeTaxBreakdown, type CategoryRate } from "@/lib/gst";
 
 type ExtractedBill = {
   provider: string | null;
@@ -305,6 +306,18 @@ export default function UploadPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Reference data (not user-owned, readable by any signed-in user via its
+  // own RLS policy) -- fetched once so the review/verdict screens can show
+  // the tax summary line without a round trip through an API route.
+  const [categoryRates, setCategoryRates] = useState<CategoryRate[]>([]);
+  useEffect(() => {
+    supabase
+      .from("category_rates")
+      .select("*")
+      .then(({ data }) => setCategoryRates(data ?? []));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const [provider, setProvider] = useState("");
   const [providerLegalName, setProviderLegalName] = useState<string | null>(null);
   // Carried through from extraction to confirm as-is -- not user-editable
@@ -403,6 +416,10 @@ export default function UploadPage() {
   const parsedTotalValue = parseAmountInput(total);
   const parsedTotal = parsedTotalValue ?? 0;
   const livePreview = useMemo(() => computeBillChecks(parsedLines, parsedTotal), [parsedLines, parsedTotal]);
+  const taxSummary = useMemo(
+    () => summarizeTaxBreakdown(computeTaxBreakdown(parsedLines, extraFields.category, categoryRates)),
+    [parsedLines, extraFields.category, categoryRates]
+  );
 
   const canConfirm =
     provider.trim().length > 0 &&
@@ -1166,6 +1183,8 @@ export default function UploadPage() {
             </button>
           )}
 
+          {taxSummary && <p className="text-sm text-ink-muted">{taxSummary}</p>}
+
           <ChecksSummary checks={livePreview} total={parsedTotal} />
 
           <div className="rounded-lg border border-line p-4">
@@ -1297,6 +1316,11 @@ export default function UploadPage() {
                 <span className="tabular-nums">{money(stage.bill.total)}</span>
               </div>
             </div>
+
+            {(() => {
+              const summary = summarizeTaxBreakdown(computeTaxBreakdown(stage.bill.lineItems, extraFields.category, categoryRates));
+              return summary && <p className="text-sm text-ink-muted">{summary}</p>;
+            })()}
 
             <ChecksSummary checks={stage.checks} total={stage.bill.total} />
           </div>
