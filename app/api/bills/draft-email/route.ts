@@ -39,6 +39,9 @@ export async function POST(request: Request) {
     return json({ success: false, reason: "bad_request", message: validated.message }, 400);
   }
   const { billId, outcome, facts, tonePreset } = validated.data;
+  // confirmed_error is the only confident-tone outcome -- cannot_verify and
+  // unexplained both draft a soft inquiry (the wording differs between
+  // them inside draftEmail, keyed off facts, not off outcome).
   const tone: Tone = outcome === "confirmed_error" ? "confident" : "inquiry";
   const isDefaultTone = tonePreset === null;
 
@@ -117,7 +120,15 @@ export async function POST(request: Request) {
 function validatePayload(
   value: unknown
 ):
-  | { ok: true; data: { billId: string; outcome: "confirmed_error" | "unexplained"; facts: Facts; tonePreset: TonePreset | null } }
+  | {
+      ok: true;
+      data: {
+        billId: string;
+        outcome: "confirmed_error" | "cannot_verify" | "unexplained";
+        facts: Facts;
+        tonePreset: TonePreset | null;
+      };
+    }
   | { ok: false; message: string } {
   if (typeof value !== "object" || value === null) return { ok: false, message: "Request body was missing." };
   const v = value as Record<string, unknown>;
@@ -125,7 +136,8 @@ function validatePayload(
   const billId = typeof v.billId === "string" ? v.billId : "";
   if (!billId) return { ok: false, message: "No bill id was given." };
 
-  const outcome = v.outcome === "confirmed_error" || v.outcome === "unexplained" ? v.outcome : null;
+  const outcome =
+    v.outcome === "confirmed_error" || v.outcome === "cannot_verify" || v.outcome === "unexplained" ? v.outcome : null;
   if (!outcome) return { ok: false, message: "Invalid outcome." };
 
   const tonePreset = TONE_PRESETS.includes(v.tonePreset as TonePreset) ? (v.tonePreset as TonePreset) : null;

@@ -6,19 +6,32 @@
 //    a specific, pinpointed cause -- a checkpoint gap with a single
 //    suggested culprit line, or a promise WITH a given amount that the
 //    billed total doesn't match. Always wins over a softer signal (an
-//    unrecognized-line flag, a promise with no number).
-// 2. CANNOT VERIFY (no tone, no email): a real gap exists, but nothing
-//    pinpoints a specific cause -- a checkpoint gap with no single
-//    suggestion, a statement that doesn't reconcile within rounding, a
-//    payment that doesn't reconcile (even after crediting any outstanding/
-//    arrears line), or the general arithmetic check with nothing more
-//    specific to explain it. Honest uncertainty, not an accusation (hard
-//    rule 5).
+//    unrecognized-line flag, a promise with no number), and over the
+//    rounding tolerance below -- a pinpointed line is real evidence
+//    regardless of how small the amount is.
+// 2. CANNOT VERIFY (inquiry tone, drafts a soft email): an unpinpointed gap
+//    exists -- a checkpoint gap with no single suggestion, a statement
+//    that doesn't reconcile, a payment that doesn't reconcile (even after
+//    crediting any outstanding/arrears line), or the general arithmetic
+//    check with nothing more specific to explain it -- AND that gap is
+//    bigger than MINOR_GAP_TOLERANCE. Honest uncertainty, not an
+//    accusation (hard rule 5): the email asks the provider to help
+//    clarify a difference, it doesn't allege an error.
 // 3. UNEXPLAINED (inquiry tone, drafts an email): no hard evidence of any
 //    kind, but the user marked a line "I don't recognise this", or a
 //    promise was made with no comparable amount to check it against.
-// 4. CLEAN: none of the above.
+// 4. CLEAN: none of the above -- including an unpinpointed gap that's
+//    within MINOR_GAP_TOLERANCE, which is far more likely a rounding or
+//    OCR field-selection quirk than a real discrepancy worth an email.
 import { EPSILON, type BillLine, type BillChecks } from "./bill-checks.ts";
+
+// A gap this small, with no pinpointed cause, isn't worth flagging -- it's
+// far more likely a rounding difference or a misread field than an actual
+// billing error. Only gates the three "something doesn't add up but we
+// don't know why" branches below, never the confirmed_error branches
+// (a pinpointed line, or a user-stated promise mismatch, is real evidence
+// regardless of size).
+export const MINOR_GAP_TOLERANCE = 5.0;
 
 export type Promise = { statement: string; promisedAmount: number | null };
 
@@ -40,9 +53,12 @@ export type Facts = {
 };
 
 export type Verdict =
-  | { outcome: "clean"; reconciledTotal: number }
+  // roundingGap is set (non-null) only when an unpinpointed gap was found
+  // but forgiven for being within MINOR_GAP_TOLERANCE -- lets the UI say
+  // "within rounding" instead of a plain clean, without a separate outcome.
+  | { outcome: "clean"; reconciledTotal: number; roundingGap: number | null }
   | { outcome: "confirmed_error"; tone: "confident"; facts: Facts }
-  | { outcome: "cannot_verify"; facts: Facts }
+  | { outcome: "cannot_verify"; tone: "inquiry"; facts: Facts }
   | { outcome: "unexplained"; tone: "inquiry"; facts: Facts };
 
 export function decideVerdict(input: {
@@ -66,6 +82,13 @@ export function decideVerdict(input: {
     total,
   });
 
+  // An unpinpointed gap within tolerance: clean, with the gap kept around
+  // only so the UI can say "within rounding" instead of a plain clean.
+  const unpinpointed = (gap: number): Verdict =>
+    Math.abs(gap) <= MINOR_GAP_TOLERANCE
+      ? { outcome: "clean", reconciledTotal: total, roundingGap: gap }
+      : { outcome: "cannot_verify", tone: "inquiry", facts: baseFacts(gap, []) };
+
   const brokenCheckpoint = checks.checkpoints.find((c) => Math.abs(c.gap) > EPSILON);
   if (brokenCheckpoint) {
     if (brokenCheckpoint.suggestion) {
@@ -75,7 +98,7 @@ export function decideVerdict(input: {
         facts: baseFacts(brokenCheckpoint.gap, [brokenCheckpoint.suggestion]),
       };
     }
-    return { outcome: "cannot_verify", facts: baseFacts(brokenCheckpoint.gap, []) };
+    return unpinpointed(brokenCheckpoint.gap);
   }
 
   const promiseGap = promise?.promisedAmount != null ? checks.billedSum - promise.promisedAmount : null;
@@ -84,7 +107,7 @@ export function decideVerdict(input: {
   }
 
   if (checks.statement && checks.statement.issue) {
-    return { outcome: "cannot_verify", facts: baseFacts(checks.statement.gap, []) };
+    return unpinpointed(checks.statement.gap);
   }
 
   // Note: a payment that doesn't reconcile (even crediting any outstanding/
@@ -95,7 +118,7 @@ export function decideVerdict(input: {
   // by the branch below with the right, unified gap number (billedSum vs
   // the printed total, not some payment-specific figure).
   if (checks.arithmeticIssue) {
-    return { outcome: "cannot_verify", facts: baseFacts(checks.arithmeticDifference, []) };
+    return unpinpointed(checks.arithmeticDifference);
   }
 
   const unrecognizedLines = lines.filter((l) => l.unrecognized).map((l) => ({ label: l.label, amount: l.amount }));
@@ -105,5 +128,5 @@ export function decideVerdict(input: {
     return { outcome: "unexplained", tone: "inquiry", facts: baseFacts(0, unrecognizedLines) };
   }
 
-  return { outcome: "clean", reconciledTotal: total };
+  return { outcome: "clean", reconciledTotal: total, roundingGap: null };
 }

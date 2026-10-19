@@ -79,6 +79,16 @@ function passesNumberGuard(draft: EmailDraft, facts: Facts): boolean {
   return allNumbersAreFacts(draft, facts) && totalClaimsAreCorrect(draft, facts);
 }
 
+// True for cannot_verify's email specifically: an inquiry-tone draft with a
+// real (non-zero) gap but no pinpointed line -- distinct from unexplained's
+// inquiry draft, which always has either a disputed line or a zero gap
+// (see lib/verdict.ts's baseFacts(0, ...) calls). Softer wording ("a small
+// difference") rather than "could you confirm the charges are correct",
+// since there's nothing specific to point at.
+function isUnpinpointedGap(facts: Facts): boolean {
+  return facts.disputedLines.length === 0 && Math.abs(facts.gap) > NUMBER_EPSILON;
+}
+
 // Exported so a test can assert the fact numbers it carries don't change
 // across tone presets -- the same guarantee passesNumberGuard enforces on
 // the model's actual output, checked one layer earlier, without a network call.
@@ -101,7 +111,9 @@ Difference: Rs ${Math.abs(facts.gap).toFixed(2)} (${facts.gap >= 0 ? "the user a
 Tone: ${
     tone === "confident"
       ? "Confident and direct. State the issue plainly and ask for a correction or a refund."
-      : "Soft and inquiry-based. Ask the provider to confirm or clarify -- do not accuse them of an error."
+      : isUnpinpointedGap(facts)
+        ? `Soft and curious, NOT accusatory -- this is a small, unpinpointed difference, not a confirmed error. Say you'd like to understand a small difference of Rs ${Math.abs(facts.gap).toFixed(2)} on the bill, and ask where it comes from. Do not name a specific wrong charge.`
+        : "Soft and inquiry-based. Ask the provider to confirm or clarify -- do not accuse them of an error."
   }
 ${preset ? `\nAdditional style instruction: ${PRESET_INSTRUCTIONS[preset]}\n` : ""}
 Return ONLY a JSON object of this exact shape, no other text: {"subject": string, "body": string}.`;
@@ -156,6 +168,18 @@ My bill dated ${facts.billDate} shows a total of Rs ${facts.total.toFixed(2)}. T
 Could you please review this and ${overpaid ? "advise on a refund or credit" : "correct the charge"}? I'd appreciate a reference number for this query.
 
 Regards,
+[Name]`,
+    };
+  }
+
+  if (isUnpinpointedGap(facts)) {
+    return {
+      subject: `A small difference on my ${facts.billDate} bill`,
+      body: `Dear ${facts.provider} Support,
+
+I'd like to understand a small difference of Rs ${Math.abs(facts.gap).toFixed(2)} on my bill dated ${facts.billDate}. The amounts I can check come to Rs ${facts.billedAmount.toFixed(2)}, against a printed total of Rs ${facts.total.toFixed(2)}. Could you help clarify where this difference comes from?
+
+Thank you,
 [Name]`,
     };
   }

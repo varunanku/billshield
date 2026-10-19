@@ -23,8 +23,8 @@ export async function createClient() {
             );
           } catch {
             // Called from a Server Component, where cookies can't be
-            // written. Harmless as long as middleware is also refreshing
-            // the session (it is, see middleware.ts).
+            // written. Harmless as long as the session is also being
+            // refreshed elsewhere (it is, see proxy.ts).
           }
         },
       },

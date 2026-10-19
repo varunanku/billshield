@@ -100,11 +100,13 @@ function money(n: number) {
   return n.toFixed(2);
 }
 
-// Only these two outcomes draft an email -- cannot_verify is an honest
-// "something's off but we don't know what" with no pinpointed cause to
-// write a confident OR an inquiry email about, so it gets neither.
+// Every outcome except "clean" drafts an email. cannot_verify now only
+// exists for gaps above MINOR_GAP_TOLERANCE (a sub-5.00 unpinpointed gap
+// becomes "clean" with roundingGap set, in lib/verdict.ts) -- so by the
+// time it's reached here, there's always a real-enough gap worth a soft,
+// non-accusatory inquiry email asking the provider to help clarify it.
 function outcomeDraftsEmail(outcome: Verdict["outcome"]): boolean {
-  return outcome === "confirmed_error" || outcome === "unexplained";
+  return outcome === "confirmed_error" || outcome === "cannot_verify" || outcome === "unexplained";
 }
 
 // Upload -> Review -> Verdict. A minimal 3-dot/line stepper, not shown on
@@ -257,6 +259,14 @@ export default function UploadPage() {
   const [uploadedPath, setUploadedPath] = useState<string | null>(null);
   const [stage, setStage] = useState<Stage>({ name: "upload" });
   const [isConfirming, setIsConfirming] = useState(false);
+
+  // Display-only -- middleware.ts is what actually guards this page from
+  // an unauthenticated visit; this just shows who's signed in.
+  const [userEmail, setUserEmail] = useState<string | null>(null);
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data }) => setUserEmail(data.user?.email ?? null));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const [provider, setProvider] = useState("");
   const [billDate, setBillDate] = useState("");
@@ -557,9 +567,14 @@ export default function UploadPage() {
   useEffect(() => {
     if (stage.name !== "done") return;
     // Written as a literal comparison (not outcomeDraftsEmail) so
-    // TypeScript narrows stage.verdict to the two variants that carry
+    // TypeScript narrows stage.verdict to the three variants that carry
     // .facts, which the fetch body below reads.
-    if (stage.verdict.outcome !== "confirmed_error" && stage.verdict.outcome !== "unexplained") return;
+    if (
+      stage.verdict.outcome !== "confirmed_error" &&
+      stage.verdict.outcome !== "cannot_verify" &&
+      stage.verdict.outcome !== "unexplained"
+    )
+      return;
     if (emailDraft || draftRequestedRef.current) return;
     draftRequestedRef.current = true;
 
@@ -626,7 +641,12 @@ export default function UploadPage() {
 
   async function handleRegenerate() {
     if (stage.name !== "done") return;
-    if (stage.verdict.outcome !== "confirmed_error" && stage.verdict.outcome !== "unexplained") return;
+    if (
+      stage.verdict.outcome !== "confirmed_error" &&
+      stage.verdict.outcome !== "cannot_verify" &&
+      stage.verdict.outcome !== "unexplained"
+    )
+      return;
     if (regenerating) return;
     setRegenerating(true);
     setEmailError(null);
@@ -727,7 +747,7 @@ export default function UploadPage() {
       : null;
 
   return (
-    <main className="mx-auto w-full max-w-[720px] px-4 py-8">
+    <main className="mx-auto w-full max-w-[900px] px-4 py-8 sm:px-6 sm:py-12">
       <div className="mb-6 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <svg viewBox="0 0 32 32" fill="none" className="h-7 w-7" aria-hidden>
@@ -743,9 +763,12 @@ export default function UploadPage() {
           </svg>
           <h1 className="font-serif text-2xl">BillShield</h1>
         </div>
-        <button onClick={handleSignOut} className="text-sm text-ink-muted transition-colors hover:text-ink">
-          Sign out
-        </button>
+        <div className="flex items-center gap-3">
+          {userEmail && <span className="text-sm text-ink-muted">{userEmail}</span>}
+          <button onClick={handleSignOut} className="text-sm text-ink-muted transition-colors hover:text-ink">
+            Sign out
+          </button>
+        </div>
       </div>
 
       {progressStep && <ProgressSteps current={progressStep} />}
@@ -809,7 +832,7 @@ export default function UploadPage() {
       )}
 
       {stage.name === "reviewing" && (
-        <section className="receipt-edge mt-2 flex flex-col gap-4 rounded-xl border border-line bg-card p-5 shadow-sm">
+        <section className="receipt-edge mx-auto mt-2 flex w-full max-w-[800px] flex-col gap-4 rounded-xl border border-line bg-card p-5 shadow-sm">
           <button type="button" onClick={backToUpload} className="self-start text-sm text-ink-muted transition-colors hover:text-ink">
             ← Back to upload
           </button>
@@ -941,17 +964,25 @@ export default function UploadPage() {
       )}
 
       {stage.name === "done" && (
-        <section className="mt-2 flex flex-col gap-4">
+        <section className="mt-2 flex flex-col gap-6">
           <button type="button" onClick={backToReview} className="self-start text-sm text-ink-muted transition-colors hover:text-ink">
             ← Back to review
           </button>
 
           {stage.verdict.outcome === "clean" && (
             <div className="rounded-xl bg-emerald-soft p-5">
-              <p className="font-serif text-xl text-emerald">✓ Your bill checks out.</p>
+              <p className="font-serif text-xl text-emerald">
+                ✓ Your bill checks out{stage.verdict.roundingGap !== null ? " (within rounding)" : ""}.
+              </p>
               <p className="mt-1 text-ink-muted">
                 Reconciled total: <span className="tabular-nums font-medium text-ink">{money(stage.verdict.reconciledTotal)}</span>
               </p>
+              {stage.verdict.roundingGap !== null && (
+                <p className="mt-1 text-sm text-ink-muted">
+                  A small difference of Rs {money(Math.abs(stage.verdict.roundingGap))} was found but is too small to be worth
+                  disputing.
+                </p>
+              )}
             </div>
           )}
           {stage.verdict.outcome === "confirmed_error" && (
@@ -977,7 +1008,7 @@ export default function UploadPage() {
             </div>
           )}
 
-          <div className="receipt-edge flex flex-col gap-3 rounded-xl border border-line bg-card p-5 shadow-sm">
+          <div className="receipt-edge mx-auto flex w-full max-w-[800px] flex-col gap-3 rounded-xl border border-line bg-card p-5 shadow-sm">
             <p>
               <strong>{stage.bill.provider}</strong> <span className="text-ink-muted">-- {stage.bill.billDate}</span>
             </p>
@@ -1110,9 +1141,9 @@ export default function UploadPage() {
                   type="button"
                   onClick={handleAskQuestion}
                   disabled={chatSending || !chatInput.trim()}
-                  className={buttonSecondary}
+                  className={buttonPrimary}
                 >
-                  {chatSending ? "..." : "Ask"}
+                  {chatSending ? "Sending..." : "Send"}
                 </button>
               </div>
             )}
