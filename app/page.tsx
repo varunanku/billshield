@@ -1582,6 +1582,7 @@ export default function UploadPage() {
                         ))}
                       </select>
                     </label>
+                    <InfoTooltip text="Polite -- extra courteous. Firm -- direct, makes clear this needs resolving promptly. Formal -- business-letter register, no casual phrasing. Brief -- as short as possible, a few sentences. Friendly -- warm and conversational. Escalation -- firmer, and notes you'll escalate if it isn't resolved." />
                     <button
                       type="button"
                       onClick={handleRegenerate}
@@ -1591,6 +1592,11 @@ export default function UploadPage() {
                       {regenerating ? "Regenerating..." : "Regenerate"}
                     </button>
                   </div>
+                  <p className="text-xs text-text-muted">
+                    Want a different feel? Pick a tone and press Regenerate. The AI rewrites the same message in
+                    that style. The facts and amounts stay exactly the same -- they come from the bill checks, not
+                    the AI.
+                  </p>
                 </div>
               )}
             </div>
@@ -1599,12 +1605,13 @@ export default function UploadPage() {
           {/* Only once there's an actual draft to explain -- not while
               "Drafting..." or on an error, and never for a clean verdict
               (verdictDraftsEmail is already false there, same gate as the
-              email card above). */}
+              email card above). Trimmed to not repeat the Tone/Regenerate
+              helper line just above. */}
           {verdictDraftsEmail(stage.verdict) && emailDraft && (
             <p className="text-sm text-text-muted">
               This message reflects our understanding of the issue found on your bill -- check it matches what you
-              see on your paper bill. You can send it as-is, regenerate it in a different tone, write your own, or
-              use Copy / Open in email app to send it directly.
+              see on your paper bill. You can send it as-is, write your own, or use Copy / Open in email app to
+              send it directly.
             </p>
           )}
 
