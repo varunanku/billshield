@@ -9,5 +9,5 @@ export function buildThankYouMessage(fullName: string | null, provider: string |
 
   const greeting = firstName ? `Thanks for trusting BillShield, ${firstName}.` : "Thanks for trusting BillShield.";
   const withProvider = knownProvider ? ` with ${knownProvider}` : "";
-  return `${greeting} We hope this message helps you get this sorted${withProvider}. Good luck!`;
+  return `${greeting} BillShield hopes this message helps you get this sorted${withProvider}. Good luck!`;
 }

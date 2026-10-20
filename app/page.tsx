@@ -1202,9 +1202,9 @@ export default function UploadPage() {
       {stage.name === "upload" && (
         <>
           <p className="mb-3 rounded-md bg-warning-soft px-3 py-2 text-sm text-warning">
-            Your bill is read by an AI model to pull out the line items. Please mask your name, address, phone
-            number and any other sensitive details before uploading -- we also run an automatic backup mask, but
-            covering it yourself first is safer.
+            Your bill is read by BillShield&apos;s AI assistant to pull out the line items. Please mask your name,
+            address, phone number and any other sensitive details before uploading -- BillShield also runs an
+            automatic backup mask, but covering it yourself first is safer.
           </p>
           <form onSubmit={handleUpload} className="flex flex-col gap-3">
             <label
@@ -1342,7 +1342,7 @@ export default function UploadPage() {
 
           <div className="flex items-center gap-1.5">
             <span className="text-sm font-bold text-text-muted">Line items</span>
-            <InfoTooltip text="The AI only reads the text off your bill. Every sum, checkpoint and the final verdict are calculated by code, never by the AI." />
+            <InfoTooltip text="The AI only reads the text off your bill. Every sum, checkpoint and the final verdict are calculated by BillShield's checks, never by the AI." />
           </div>
           <div className="flex flex-col divide-y divide-border">
             {lines.map((line, i) => {
@@ -1444,7 +1444,7 @@ export default function UploadPage() {
           <div className="rounded-lg border border-border p-4">
             <p className="mb-2 flex items-center gap-1.5 font-bold">
               What were you promised? <span className="font-normal text-text-muted">(optional)</span>
-              <InfoTooltip text="Were you promised a discount, a specific price, or a plan before this bill arrived? Tell us and we'll compare it against what's actually billed." />
+              <InfoTooltip text="Were you promised a discount, a specific price, or a plan before this bill arrived? Add it here and BillShield's checks will compare it against what's actually billed." />
             </p>
             <div className="flex flex-col gap-3">
               <label className="flex flex-col gap-1 text-sm">
@@ -1543,7 +1543,7 @@ export default function UploadPage() {
             <div className="flex items-start gap-3 rounded-lg border-l-4 border-warning bg-warning-soft p-5 text-warning animate-fade-up">
               <AlertTriangleIcon className="mt-1 h-7 w-7 shrink-0" />
               <div>
-                <p className="text-[28px] font-bold leading-tight">We couldn&apos;t read every line of this bill.</p>
+                <p className="text-[28px] font-bold leading-tight">BillShield couldn&apos;t verify every line of this bill.</p>
                 <p className="mt-1 text-text">
                   Gap: <span className="font-mono tabular-nums font-medium">{money(Math.abs(stage.verdict.facts.gap))}</span> --
                   compare the line items above with your paper bill for anything missing or misread.
@@ -1630,7 +1630,7 @@ export default function UploadPage() {
                   </label>
                   <div className="flex flex-col gap-1">
                     <p className="font-bold">Ready to send?</p>
-                    <p className="text-sm text-text-muted">Check it matches your paper bill, then send it to your provider.</p>
+                    <p className="text-sm text-text-muted">Check the message matches your paper bill, then send it to your provider.</p>
                   </div>
                   <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
                     <a href={mailtoHref()} onClick={triggerThankYou} className={`${buttonPrimary} w-full text-center sm:w-auto`}>
@@ -1677,8 +1677,8 @@ export default function UploadPage() {
                   </div>
                   <p className="text-xs text-text-muted">
                     Want a different feel? Pick a tone and press Regenerate. The AI rewrites the same message in
-                    that style. The facts and amounts stay exactly the same -- they come from the bill checks, not
-                    the AI.
+                    that style. The facts and amounts stay exactly the same -- they come from BillShield&apos;s
+                    checks, not the AI.
                   </p>
                 </div>
               )}
@@ -1688,24 +1688,24 @@ export default function UploadPage() {
           {/* Only once there's an actual draft to explain -- not while
               "Drafting..." or on an error, and never for a clean verdict
               (verdictDraftsEmail is already false there, same gate as the
-              email card above). Trimmed to not repeat the Tone/Regenerate
-              helper line just above. */}
+              email card above). */}
           {verdictDraftsEmail(stage.verdict) && emailDraft && (
             <p className="text-sm text-text-muted">
-              This message reflects our understanding of the issue found on your bill -- check it matches what you
-              see on your paper bill. You can send it as-is, write your own, or use Copy / Open in email app to
-              send it directly.
+              This message was drafted by AI from BillShield&apos;s checks. Check it matches your paper bill before
+              sending.
             </p>
           )}
 
           <div className={card}>
             <p className="mb-1 flex items-center gap-1.5 font-bold">
-              {userFullName ? `${userFullName.trim().split(/\s+/)[0]}, got questions about this bill?` : "Questions about this bill?"}
+              {userFullName ? `${userFullName.trim().split(/\s+/)[0]}, ask BillShield's AI assistant` : "Ask BillShield's AI assistant"}
               <InfoTooltip text="Can: explain any line, the tax rate, how the total was computed, compare with your earlier bills from the same provider, and fix a value you think was misread. Can't: contact your provider, see your paper bill, or give legal or financial advice." />
             </p>
             <p className="mb-3 text-sm text-text-muted">
-              Ask anything about this bill -- it can explain a line, the tax rate, or your total, and compare with
-              earlier bills from this provider. It can&apos;t contact your provider or see your paper bill.
+              Ask BillShield&apos;s AI assistant anything about this bill. It can explain a line, the tax rate or
+              your total, compare with earlier bills from this provider, and fix a value you think was misread. It
+              answers only from the checks BillShield ran on your bill, and it can&apos;t contact your provider or
+              see your paper bill.
             </p>
             {!chatSending && suggestionChips.length > 0 && (
               <div className="mb-3 flex flex-wrap gap-2">
@@ -1727,7 +1727,12 @@ export default function UploadPage() {
                 {chatMessages.map((m, i) => {
                   if (m.kind === "text") {
                     return (
-                      <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
+                      <div key={i} className={`flex flex-col gap-1 ${m.role === "user" ? "items-end" : "items-start"}`}>
+                        {m.role === "assistant" && (
+                          <span className="rounded-full bg-accent-soft px-1.5 py-0.5 text-[10px] font-bold text-accent">
+                            AI
+                          </span>
+                        )}
                         <p
                           className={`max-w-[85%] rounded-lg px-3 py-2 text-sm ${
                             m.role === "user" ? "bg-accent-soft text-accent" : "bg-surface-alt text-text"
@@ -1814,6 +1819,10 @@ export default function UploadPage() {
                 </button>
               </div>
             )}
+            <p className="mt-2 text-xs text-text-muted">
+              AI can make mistakes. Check important details against your paper bill. The verdict above comes from
+              BillShield&apos;s checks, not the AI.
+            </p>
           </div>
 
           <button onClick={startOver} className={`${buttonSecondary} self-start`}>
