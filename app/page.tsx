@@ -213,6 +213,51 @@ function PencilButton({ onClick, label }: { onClick: () => void; label: string }
   );
 }
 
+// A small, always-available (i) icon -- hover on desktop, tap on mobile
+// (the same onClick toggles it either way), dismissed by tapping/clicking
+// anywhere else. Never remembers being dismissed -- there's nothing to
+// persist, it just closes. Anchored to the icon's left edge (not centered)
+// and width-capped against the viewport so it can't overflow at mobile
+// widths; every section this is used in keeps the icon well clear of the
+// right edge, so left-anchoring never clips there either.
+function InfoTooltip({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLSpanElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function handleOutside(e: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("click", handleOutside);
+    return () => document.removeEventListener("click", handleOutside);
+  }, [open]);
+
+  return (
+    <span ref={containerRef} className="relative inline-flex">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        onMouseEnter={() => setOpen(true)}
+        onMouseLeave={() => setOpen(false)}
+        aria-label="More information"
+        aria-expanded={open}
+        className="flex h-5 w-5 items-center justify-center rounded-full border border-border text-[11px] font-bold text-text-muted transition-colors hover:border-accent hover:text-accent"
+      >
+        i
+      </button>
+      {open && (
+        <span
+          role="tooltip"
+          className="absolute left-0 top-full z-20 mt-2 w-64 max-w-[calc(100vw-2rem)] rounded-lg border border-border bg-surface p-3 text-xs font-normal text-text shadow-card"
+        >
+          {text}
+        </span>
+      )}
+    </span>
+  );
+}
+
 // Verdict banner icons -- left-aligned per outcome. The checkmark draws in
 // via the shared .animate-draw-in keyframe (stroke-dasharray/offset).
 function ShieldCheckIcon({ className }: { className?: string }) {
@@ -1190,6 +1235,10 @@ export default function UploadPage() {
             <p className="text-sm text-danger">Enter a valid number, e.g. 1234.56 or 1,234.56.</p>
           )}
 
+          <div className="flex items-center gap-1.5">
+            <span className="text-sm font-bold text-text-muted">Line items</span>
+            <InfoTooltip text="The AI only reads the text off your bill. Every sum, checkpoint and the final verdict are calculated by code, never by the AI." />
+          </div>
           <div className="flex flex-col divide-y divide-border">
             {lines.map((line, i) => {
               const amountInvalid = line.amount.trim() !== "" && parseAmountInput(line.amount) === null;
@@ -1288,7 +1337,10 @@ export default function UploadPage() {
           <ChecksSummary checks={livePreview} total={parsedTotal} />
 
           <div className="rounded-lg border border-border p-4">
-            <p className="mb-2 font-bold">What were you promised? <span className="font-normal text-text-muted">(optional)</span></p>
+            <p className="mb-2 flex items-center gap-1.5 font-bold">
+              What were you promised? <span className="font-normal text-text-muted">(optional)</span>
+              <InfoTooltip text="Were you promised a discount, a specific price, or a plan before this bill arrived? Tell us and we'll compare it against what's actually billed." />
+            </p>
             <div className="flex flex-col gap-3">
               <label className="flex flex-col gap-1 text-sm">
                 Plan or description
