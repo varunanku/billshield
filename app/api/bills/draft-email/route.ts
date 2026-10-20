@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { draftEmail, TONE_PRESETS, type Tone, type TonePreset } from "@/lib/email-draft";
+import { draftEmail, applySignature, TONE_PRESETS, type Tone, type TonePreset } from "@/lib/email-draft";
 import type { Facts } from "@/lib/verdict";
 
 export const maxDuration = 30;
@@ -55,7 +55,13 @@ export async function POST(request: Request) {
     return json({ success: false, reason: "unauthorized", message: "That bill doesn't belong to you." }, 401);
   }
 
-  const draft = await draftEmail(facts, tone, tonePreset);
+  // Code, not the prompt -- the sign-off's "[Name]" placeholder is swapped
+  // for the user's own full name (auth metadata, same source as the
+  // header/thank-you toast) here, after the draft already exists, on
+  // every draft including a Regenerate (both hit this same route). Left
+  // as "[Name]" when there's no name to put there.
+  const fullName = typeof user.user_metadata?.full_name === "string" ? user.user_metadata.full_name.trim() : "";
+  const draft = applySignature(await draftEmail(facts, tone, tonePreset), fullName || null);
 
   // Each Regenerate click is a new row (the proof chain keeps every
   // version, and "I've sent it" marks which one went out), versioned per

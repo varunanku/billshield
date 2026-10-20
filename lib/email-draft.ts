@@ -258,3 +258,18 @@ export async function draftEmail(facts: Facts, tone: Tone, preset: TonePreset | 
   }
   return draft;
 }
+
+// The sign-off's "[Name]" placeholder (see templateEmail above -- the one
+// identity detail every draft, model-written or fallback, is expected to
+// carry) is swapped for the user's own full name in code, after the draft
+// already exists -- never asked of the LLM itself, so there's nothing here
+// for the number/content guard above to even reason about. The caller
+// (app/api/bills/draft-email/route.ts) applies this on every draft,
+// including a Regenerate, since both paths produce an EmailDraft the same
+// way. Keeps "[Name]" unchanged when there's no name to put there.
+const NAME_PLACEHOLDER = /\[Name\]/g;
+
+export function applySignature(draft: EmailDraft, fullName: string | null): EmailDraft {
+  if (!fullName) return draft;
+  return { ...draft, body: draft.body.replace(NAME_PLACEHOLDER, fullName) };
+}
