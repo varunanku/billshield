@@ -16,7 +16,13 @@ import {
   type BillCategory,
 } from "@/lib/bill-checks";
 import { shouldDraftEmail, type Verdict } from "@/lib/verdict";
-import { MAX_FOLLOWUP_MESSAGES, type FollowupBillContext, type FollowupReply, type Correction } from "@/lib/followup";
+import {
+  MAX_FOLLOWUP_MESSAGES,
+  disputedLinesForChat,
+  type FollowupBillContext,
+  type FollowupReply,
+  type Correction,
+} from "@/lib/followup";
 import type { TonePreset } from "@/lib/email-draft";
 import { isSuspiciousBillDate } from "@/lib/date-check";
 import { computeTaxBreakdown, summarizeTaxBreakdown, computeEffectiveTaxRates, type CategoryRate } from "@/lib/gst";
@@ -1048,6 +1054,7 @@ export default function UploadPage() {
 
   function buildFollowupContext(bill: ConfirmedBill, checks: BillChecks, verdict: Verdict): FollowupBillContext {
     const facts = "facts" in verdict ? verdict.facts : null;
+    const taxTotal = bill.lineItems.filter((li) => li.role === "tax").reduce((s, li) => s + li.amount, 0);
     return {
       provider: bill.provider,
       billDate: bill.billDate,
@@ -1055,9 +1062,10 @@ export default function UploadPage() {
       lineItems: bill.lineItems.map((li) => ({ label: li.label, amount: li.amount, role: li.role })),
       verdictOutcome: verdict.outcome,
       verdictGap: facts ? facts.gap : null,
-      disputedLines: facts ? facts.disputedLines : [],
+      disputedLines: disputedLinesForChat(facts),
       warnings: checks.warnings.map((w) => w.message),
       printedHsnCodes,
+      taxTotal,
     };
   }
 

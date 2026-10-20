@@ -275,12 +275,13 @@ function validatePayload(
   const printedHsnCodes = Array.isArray(c.printedHsnCodes)
     ? c.printedHsnCodes.filter((code): code is string => typeof code === "string")
     : [];
+  const taxTotal = typeof c.taxTotal === "number" && Number.isFinite(c.taxTotal) ? c.taxTotal : 0;
 
   return {
     ok: true,
     data: {
       question,
-      context: { provider, billDate, total, lineItems, verdictOutcome, verdictGap, disputedLines, warnings, printedHsnCodes },
+      context: { provider, billDate, total, lineItems, verdictOutcome, verdictGap, disputedLines, warnings, printedHsnCodes, taxTotal },
     },
   };
 }

@@ -14,11 +14,29 @@ export type FollowupBillContext = {
   disputedLines: { label: string; amount: number }[];
   warnings: string[];
   printedHsnCodes: string[]; // only codes the bill itself printed -- see lib/gst.ts#findMatchingRate
+  taxTotal: number; // sum of tax-role lines, computed in code (app/page.tsx#buildFollowupContext)
 };
 
 export type ChatTurn = { role: "user" | "assistant"; content: string };
 
 export const MAX_FOLLOWUP_MESSAGES = 10;
+
+// The overpaid reason (lib/verdict.ts) has no disputedLines of its own --
+// bill-checks.ts's payment check isn't about any one line -- but it DOES
+// have a matched reconciling line (e.g. "OUTSTANDING_AMOUNT") when one
+// exists, and the chat should be able to name it just as specifically as
+// any other confirmed_error. Never overrides an outcome that already has
+// its own disputedLines (checkpoint/promise/unrecognized-line).
+export function disputedLinesForChat(facts: {
+  disputedLines: { label: string; amount: number }[];
+  reconcilingBalanceLabel: string | null;
+  gap: number;
+} | null): { label: string; amount: number }[] {
+  if (!facts) return [];
+  if (facts.disputedLines.length > 0) return facts.disputedLines;
+  if (facts.reconcilingBalanceLabel) return [{ label: facts.reconcilingBalanceLabel, amount: Math.abs(facts.gap) }];
+  return [];
+}
 
 export function buildFollowupSystemPrompt(context: FollowupBillContext): string {
   const lines =
@@ -30,6 +48,16 @@ export function buildFollowupSystemPrompt(context: FollowupBillContext): string 
       ? context.disputedLines.map((l) => `${l.label} (Rs ${l.amount.toFixed(2)})`).join(", ")
       : "none";
   const warnings = context.warnings.length > 0 ? context.warnings.join("\n") : "none";
+  // The sign convention (gap = billedSum - amountPaid, negative = overpaid)
+  // is an internal implementation detail of lib/verdict.ts -- never handed
+  // to the model as a bare signed number it might just parrot back. Spelled
+  // out here instead, in the one direction a user actually cares about.
+  const gapDescription =
+    context.verdictGap === null
+      ? "none"
+      : context.verdictGap < 0
+        ? `Rs ${Math.abs(context.verdictGap).toFixed(2)} -- the user OVERPAID by this amount. Always describe this as "overpaid by Rs ${Math.abs(context.verdictGap).toFixed(2)}", never state a negative number.`
+        : `Rs ${context.verdictGap.toFixed(2)} owed/undercharged by this amount.`;
 
   return `You answer a user's questions about ONE specific bill, and may propose a correction if you spot a misread. Use ONLY the facts printed below -- never invent, total, or recompute a number that isn't already given here.
 
@@ -40,8 +68,9 @@ Line items (index: label -- amount [role]):
 ${lines}
 
 BillShield's checks on this bill -- verdict: ${context.verdictOutcome}
-Gap found (if any): ${context.verdictGap === null ? "none" : `Rs ${context.verdictGap.toFixed(2)}`}
-Disputed/unexplained lines: ${disputed}
+Gap found (if any): ${gapDescription}
+Disputed/unexplained lines (the ones BillShield's checks actually matched -- never substitute a different line from the list above): ${disputed}
+Total tax (sum of this bill's tax lines, computed by BillShield's checks): Rs ${context.taxTotal.toFixed(2)}
 Other warnings BillShield's checks noticed: ${warnings}
 
 Rules:
@@ -49,7 +78,11 @@ Rules:
   "BillShield's checks", never as "the app".
 - Answer only about this bill's contents and BillShield's checks (the verdict and warnings) above.
 - Never state a number that isn't already printed above exactly as given -- don't add, subtract, or estimate.
-- If the bill doesn't show something the user asks about, say so plainly rather than guessing.
+- When asked which line explains a confirmed_error or cannot_verify outcome, name exactly the line(s) listed in
+  "Disputed/unexplained lines" above -- never guess a different line from the full line-items list.
+- If the bill doesn't show something the user asks about, say so plainly rather than guessing -- e.g. say "the
+  bill doesn't show a combined total", never "BillShield's checks did not print X" (checks compute from what's
+  printed, they don't print anything themselves).
 - If asked whether a charge is legal or against policy, say BillShield can't confirm that, only the maths.
 - When unsure, say so plainly and point the user back to their own paper bill -- never present an answer as
   certain if it isn't in the confirmed facts above.
