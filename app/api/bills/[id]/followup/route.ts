@@ -12,28 +12,20 @@ import {
 } from "@/lib/followup";
 import { computeHistoryQuery } from "@/lib/history";
 import { computeTaxBreakdown, findMatchingRate, buildTaxBreakdownAddendum } from "@/lib/gst";
-import { answerFollowupQuestion as askGroq, type ChatResult } from "@/lib/groq";
+import { answerFollowupQuestion as askGroq } from "@/lib/groq";
 import { answerFollowupQuestion as askOpenRouter } from "@/lib/openrouter";
 import { USE_GROQ } from "@/lib/provider";
+import { answerWithRetry, followupErrorMessage } from "@/lib/followup-provider";
 
 export const maxDuration = 45;
 
-// OpenRouter is the default/primary provider; on a 429 from it
-// specifically, wait the given retry-after (capped, so this route can't
-// blow its own time budget), retry once, and if that's still rate-limited,
-// fall back to Groq for this one answer rather than failing the turn outright.
-async function answerFollowupQuestion(systemPrompt: string, history: ChatTurn[]): Promise<ChatResult> {
+// OpenRouter is the default/primary provider (Groq the fallback, or the
+// one retry of itself when it's already primary) -- see
+// lib/followup-provider.ts#answerWithRetry for exactly what gets retried
+// and when.
+function answerFollowupQuestion(systemPrompt: string, history: ChatTurn[]) {
   const primary = USE_GROQ ? askGroq : askOpenRouter;
-  const result = await primary(systemPrompt, history);
-  if (result.ok || result.kind !== "rate_limited" || USE_GROQ) return result;
-
-  const waitSeconds = Math.min(result.retryAfterSeconds ?? 5, 10);
-  await new Promise((resolve) => setTimeout(resolve, waitSeconds * 1000));
-
-  const retried = await askOpenRouter(systemPrompt, history);
-  if (retried.ok || retried.kind !== "rate_limited") return retried;
-
-  return askGroq(systemPrompt, history);
+  return answerWithRetry(systemPrompt, history, primary, askGroq);
 }
 
 type ApiResponse =
@@ -136,24 +128,16 @@ export async function POST(request: Request, routeContext: { params: Promise<{ i
     const systemPrompt = buildFollowupSystemPrompt(context) + gstAddendum;
     const result = await answerFollowupQuestion(systemPrompt, history);
 
-    if (!result.ok && result.kind === "rate_limited") {
-      const wait = result.retryAfterSeconds;
-      return json(
-        {
-          success: false,
-          reason: "rate_limited",
-          message: wait
-            ? `We're getting a lot of requests right now. Please wait about ${Math.ceil(wait)}s and try again.`
-            : "We're getting a lot of requests right now. Please wait a few seconds and try again.",
-        },
-        429
-      );
-    }
     if (!result.ok) {
-      console.error("Follow-up answer failed:", result.detail);
+      // detail is always a provider-side technical string (an HTTP status
+      // body, "network error: ...", or "no content in X response") --
+      // never the bill content/question/systemPrompt, so this is already
+      // safe to log as-is (no bill content or PII in it).
+      console.error("Follow-up answer failed:", result.kind === "failed" ? result.detail : "rate_limited (after retry)");
+      const { reason, message } = followupErrorMessage(result);
       return json(
-        { success: false, reason: "server_error", message: withDevDetail("Couldn't answer that. Please try again.", result.detail) },
-        500
+        { success: false, reason, message: reason === "server_error" ? withDevDetail(message, result.kind === "failed" ? result.detail : "") : message },
+        reason === "rate_limited" ? 429 : 500
       );
     }
 

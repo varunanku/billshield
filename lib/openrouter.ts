@@ -93,7 +93,7 @@ export async function answerFollowupQuestion(systemPrompt: string, history: Chat
       }),
     });
   } catch (e) {
-    return { ok: false, kind: "failed", detail: `network error: ${String(e)}` };
+    return { ok: false, kind: "failed", detail: `network error: ${String(e)}`, transient: true };
   }
 
   if (res.status === 429) {
@@ -107,13 +107,13 @@ export async function answerFollowupQuestion(systemPrompt: string, history: Chat
 
   if (!res.ok) {
     const detail = await res.text().catch(() => res.statusText);
-    return { ok: false, kind: "failed", detail };
+    return { ok: false, kind: "failed", detail, transient: res.status >= 500 };
   }
 
   const json = await res.json().catch(() => null);
   const text = json?.choices?.[0]?.message?.content;
   if (typeof text !== "string") {
-    return { ok: false, kind: "failed", detail: "no content in OpenRouter response" };
+    return { ok: false, kind: "failed", detail: "no content in OpenRouter response", transient: true };
   }
   return { ok: true, text };
 }

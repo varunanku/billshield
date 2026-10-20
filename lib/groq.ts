@@ -177,7 +177,11 @@ export type ChatTurn = { role: "user" | "assistant"; content: string };
 export type ChatResult =
   | { ok: true; text: string }
   | { ok: false; kind: "rate_limited"; retryAfterSeconds: number | null }
-  | { ok: false; kind: "failed"; detail: string };
+  // transient: true for a network blip, a 5xx, or an otherwise-ok response
+  // that's missing its content -- all worth one retry. false for a 4xx
+  // (other than 429): the identical request would just fail the same way
+  // again, so this is never retried (see lib/followup-provider.ts).
+  | { ok: false; kind: "failed"; detail: string; transient: boolean };
 
 // Text-only chat completion, same model/endpoint as extraction, for the
 // post-verdict follow-up Q&A -- no images involved here.
@@ -198,7 +202,7 @@ export async function answerFollowupQuestion(systemPrompt: string, history: Chat
       }),
     });
   } catch (e) {
-    return { ok: false, kind: "failed", detail: `network error: ${String(e)}` };
+    return { ok: false, kind: "failed", detail: `network error: ${String(e)}`, transient: true };
   }
 
   if (res.status === 429) {
@@ -212,13 +216,13 @@ export async function answerFollowupQuestion(systemPrompt: string, history: Chat
 
   if (!res.ok) {
     const detail = await res.text().catch(() => res.statusText);
-    return { ok: false, kind: "failed", detail };
+    return { ok: false, kind: "failed", detail, transient: res.status >= 500 };
   }
 
   const json = await res.json().catch(() => null);
   const text = json?.choices?.[0]?.message?.content;
   if (typeof text !== "string") {
-    return { ok: false, kind: "failed", detail: "no content in Groq response" };
+    return { ok: false, kind: "failed", detail: "no content in Groq response", transient: true };
   }
   return { ok: true, text };
 }
