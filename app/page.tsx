@@ -21,6 +21,7 @@ import type { TonePreset } from "@/lib/email-draft";
 import { isSuspiciousBillDate } from "@/lib/date-check";
 import { computeTaxBreakdown, summarizeTaxBreakdown, type CategoryRate } from "@/lib/gst";
 import { ThemeSwitcher } from "@/app/theme-switcher";
+import { buildThankYouMessage } from "@/lib/thank-you";
 
 type ExtractedBill = {
   provider: string | null;
@@ -432,11 +433,17 @@ export default function UploadPage() {
   // comes straight off auth metadata (set at sign-up, see app/login/page.tsx)
   // -- no extra query needed, getUser() already returns it client-side.
   // Falls back to email for an account that signed up before this existed.
+  // userFullName is kept separate (raw, nullable, no email fallback) for the
+  // thank-you toast, which wants a real first name or nothing at all --
+  // never a greeting like "Thanks ... , jane@example.com".
   const [userDisplayName, setUserDisplayName] = useState<string | null>(null);
+  const [userFullName, setUserFullName] = useState<string | null>(null);
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
       const fullName = data.user?.user_metadata?.full_name;
-      setUserDisplayName((typeof fullName === "string" && fullName.trim()) || data.user?.email || null);
+      const trimmedFullName = (typeof fullName === "string" && fullName.trim()) || null;
+      setUserFullName(trimmedFullName);
+      setUserDisplayName(trimmedFullName || data.user?.email || null);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -491,6 +498,22 @@ export default function UploadPage() {
   >(null);
   const [emailError, setEmailError] = useState<string | null>(null);
   const [emailActionTaken, setEmailActionTaken] = useState<string | null>(null);
+  // The "thanks for trusting BillShield" toast -- shown after Copy, Open in
+  // email app or "I've sent it", auto-hides after ~6s (or sooner, on
+  // dismiss). The timer lives in a ref so re-triggering it (clicking a
+  // second button) restarts the full 6s rather than stacking timers.
+  const [showThankYou, setShowThankYou] = useState(false);
+  const thankYouTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  function triggerThankYou() {
+    setShowThankYou(true);
+    if (thankYouTimerRef.current) clearTimeout(thankYouTimerRef.current);
+    thankYouTimerRef.current = setTimeout(() => setShowThankYou(false), 6000);
+  }
+  useEffect(() => {
+    return () => {
+      if (thankYouTimerRef.current) clearTimeout(thankYouTimerRef.current);
+    };
+  }, []);
   // The dropdown's current selection -- "" means no preset chosen (the
   // default/original wording). Regenerate always reflects whatever's
   // selected here, including "" (re-roll the default tone again).
@@ -697,6 +720,7 @@ export default function UploadPage() {
       setEmailError(null);
       setEmailActionTaken(null);
       setTonePreset("");
+      setShowThankYou(false);
       draftRequestedRef.current = false;
       setChatMessages([]);
       setChatInput("");
@@ -749,6 +773,7 @@ export default function UploadPage() {
     setEmailActionTaken(null);
     setTonePreset("");
     setIsConfirming(false);
+    setShowThankYou(false);
     draftRequestedRef.current = false;
     setChatMessages([]);
     setChatInput("");
@@ -852,6 +877,7 @@ export default function UploadPage() {
   async function handleCopyEmail() {
     if (!emailDraft) return;
     await navigator.clipboard.writeText(`Subject: ${emailDraft.subject}\n\n${emailDraft.body}`);
+    triggerThankYou();
   }
 
   function mailtoHref() {
@@ -863,6 +889,7 @@ export default function UploadPage() {
     if (!emailDraft) return;
     const edited = emailDraft.body !== emailDraft.originalBody;
     const actionTaken = edited ? "sent_manually_edited" : emailDraft.isDefaultTone ? "sent_as_is" : "sent_with_tone_preset";
+    triggerThankYou();
     try {
       const res = await fetch(`/api/messages/${emailDraft.messageId}`, {
         method: "PATCH",
@@ -1518,16 +1545,23 @@ export default function UploadPage() {
                       className={`${inputClasses} min-h-40`}
                     />
                   </label>
-                  <div className="flex flex-wrap gap-2">
-                    <button type="button" onClick={handleCopyEmail} className={buttonSecondary}>
+                  <div className="flex flex-col gap-1">
+                    <p className="font-bold">Ready to send?</p>
+                    <p className="text-sm text-text-muted">Check it matches your paper bill, then send it to your provider.</p>
+                  </div>
+                  <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+                    <a href={mailtoHref()} onClick={triggerThankYou} className={`${buttonPrimary} w-full text-center sm:w-auto`}>
+                      Open in email app
+                    </a>
+                    <button type="button" onClick={handleCopyEmail} className={`${buttonSecondary} w-full sm:w-auto`}>
                       Copy
                     </button>
-                    <a href={mailtoHref()}>
-                      <button type="button" className={buttonSecondary}>
-                        Open in email app
-                      </button>
-                    </a>
-                    <button type="button" onClick={handleMarkSent} disabled={emailActionTaken !== null} className={buttonSuccess}>
+                    <button
+                      type="button"
+                      onClick={handleMarkSent}
+                      disabled={emailActionTaken !== null}
+                      className={`${buttonSuccess} w-full sm:w-auto`}
+                    >
                       {emailActionTaken ? "Marked as sent" : "I've sent it"}
                     </button>
                   </div>
@@ -1673,6 +1707,27 @@ export default function UploadPage() {
           <button onClick={startOver} className={`${buttonSecondary} self-start`}>
             Upload another bill
           </button>
+
+          {/* Inline toast, not a blocking modal -- fixed so it doesn't shift
+              the page layout, auto-hides after 6s (triggerThankYou), or
+              dismissed early by the close button. Never implies BillShield
+              itself sent anything, only that the user did. */}
+          {showThankYou && (
+            <div
+              role="status"
+              className="fixed inset-x-4 bottom-4 z-30 mx-auto flex max-w-sm items-start gap-3 rounded-lg border border-success bg-success-soft p-4 text-sm text-success shadow-card animate-fade-up sm:inset-x-auto sm:right-4 sm:left-auto"
+            >
+              <p className="flex-1">{buildThankYouMessage(userFullName, stage.bill.provider)}</p>
+              <button
+                type="button"
+                onClick={() => setShowThankYou(false)}
+                aria-label="Dismiss"
+                className="shrink-0 text-success hover:opacity-70"
+              >
+                ✕
+              </button>
+            </div>
+          )}
         </section>
       )}
 
