@@ -100,21 +100,33 @@ export default function LoginPage() {
               <p className="text-text-muted">Check your bill before you pay it.</p>
             </div>
 
-            <div className="flex justify-center gap-3 text-sm">
+            <p className="text-center text-sm text-text-muted">
+              BillShield checks the maths and tax on your bill against official rates, flags anything wrong, and
+              drafts a ready-to-send message -- or confirms it&apos;s clean.
+            </p>
+
+            <div role="tablist" className="flex gap-1 rounded-lg border border-border bg-surface-alt p-1">
               <button
                 type="button"
+                role="tab"
+                aria-selected={mode === "signup"}
                 onClick={() => switchMode("signup")}
-                className={mode === "signup" ? "font-bold text-accent" : "text-text-muted hover:text-text"}
+                className={`min-h-11 flex-1 rounded-md text-sm font-medium transition-colors ${
+                  mode === "signup" ? "bg-accent text-accent-contrast" : "text-text-muted hover:text-text"
+                }`}
               >
-                Sign up
+                New here? Sign up
               </button>
-              <span className="text-text-muted">/</span>
               <button
                 type="button"
+                role="tab"
+                aria-selected={mode === "signin"}
                 onClick={() => switchMode("signin")}
-                className={mode === "signin" ? "font-bold text-accent" : "text-text-muted hover:text-text"}
+                className={`min-h-11 flex-1 rounded-md text-sm font-medium transition-colors ${
+                  mode === "signin" ? "bg-accent text-accent-contrast" : "text-text-muted hover:text-text"
+                }`}
               >
-                Sign in
+                Already have an account? Sign in
               </button>
             </div>
 
