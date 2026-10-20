@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { signUpMetadata } from "@/lib/auth";
 
 // Minimal email/password auth -- nothing in CLAUDE.md's build order asked
 // for this page, but the upload flow needs a signed-in user for RLS to
@@ -11,10 +12,17 @@ import { createClient } from "@/lib/supabase/client";
 export default function LoginPage() {
   const router = useRouter();
   const supabase = createClient();
+  const [mode, setMode] = useState<"signin" | "signup">("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [fullName, setFullName] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  function switchMode(next: "signin" | "signup") {
+    setMode(next);
+    setMessage(null);
+  }
 
   async function handleSignIn() {
     setLoading(true);
@@ -30,6 +38,10 @@ export default function LoginPage() {
   }
 
   async function handleSignUp() {
+    if (!fullName.trim()) {
+      setMessage("Please enter your full name.");
+      return;
+    }
     setLoading(true);
     setMessage(null);
     const { error } = await supabase.auth.signUp({
@@ -37,7 +49,10 @@ export default function LoginPage() {
       password,
       // window.location.origin, not a hardcoded URL -- works the same on
       // localhost, a Vercel preview deploy, and production.
-      options: { emailRedirectTo: `${window.location.origin}/auth/callback` },
+      options: {
+        emailRedirectTo: `${window.location.origin}/auth/callback`,
+        data: signUpMetadata(fullName),
+      },
     });
     setLoading(false);
     if (error) {
@@ -49,6 +64,14 @@ export default function LoginPage() {
       return;
     }
     setMessage("Account created. Check your email to confirm, then sign in.");
+  }
+
+  function handleSubmit() {
+    if (mode === "signin") {
+      handleSignIn();
+    } else {
+      handleSignUp();
+    }
   }
 
   const inputClasses =
@@ -77,13 +100,43 @@ export default function LoginPage() {
               <p className="text-text-muted">Check your bill before you pay it.</p>
             </div>
 
+            <div className="flex justify-center gap-3 text-sm">
+              <button
+                type="button"
+                onClick={() => switchMode("signup")}
+                className={mode === "signup" ? "font-bold text-accent" : "text-text-muted hover:text-text"}
+              >
+                Sign up
+              </button>
+              <span className="text-text-muted">/</span>
+              <button
+                type="button"
+                onClick={() => switchMode("signin")}
+                className={mode === "signin" ? "font-bold text-accent" : "text-text-muted hover:text-text"}
+              >
+                Sign in
+              </button>
+            </div>
+
             <form
               onSubmit={(e) => {
                 e.preventDefault();
-                handleSignIn();
+                handleSubmit();
               }}
               className="flex flex-col gap-3"
             >
+              {mode === "signup" && (
+                <label className="flex flex-col gap-1 text-sm">
+                  Full name
+                  <input
+                    type="text"
+                    value={fullName}
+                    onChange={(e) => setFullName(e.target.value)}
+                    required
+                    className={inputClasses}
+                  />
+                </label>
+              )}
               <label className="flex flex-col gap-1 text-sm">
                 Email
                 <input
@@ -110,15 +163,7 @@ export default function LoginPage() {
                 disabled={loading}
                 className="min-h-11 rounded-lg bg-accent px-4 py-2 font-medium text-accent-contrast transition-all duration-150 hover:bg-accent-hover active:scale-[0.97] disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
               >
-                Sign in
-              </button>
-              <button
-                type="button"
-                onClick={handleSignUp}
-                disabled={loading}
-                className="min-h-11 rounded-lg border border-border px-4 py-2 font-medium text-text transition-all duration-150 hover:bg-accent-soft hover:border-accent active:scale-[0.97] disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-              >
-                Create account
+                {mode === "signin" ? "Sign in" : "Create account"}
               </button>
             </form>
             {message && (

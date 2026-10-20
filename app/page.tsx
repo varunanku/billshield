@@ -375,10 +375,16 @@ export default function UploadPage() {
   const [isConfirming, setIsConfirming] = useState(false);
 
   // Display-only -- middleware.ts is what actually guards this page from
-  // an unauthenticated visit; this just shows who's signed in.
-  const [userEmail, setUserEmail] = useState<string | null>(null);
+  // an unauthenticated visit; this just shows who's signed in. full_name
+  // comes straight off auth metadata (set at sign-up, see app/login/page.tsx)
+  // -- no extra query needed, getUser() already returns it client-side.
+  // Falls back to email for an account that signed up before this existed.
+  const [userDisplayName, setUserDisplayName] = useState<string | null>(null);
   useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => setUserEmail(data.user?.email ?? null));
+    supabase.auth.getUser().then(({ data }) => {
+      const fullName = data.user?.user_metadata?.full_name;
+      setUserDisplayName((typeof fullName === "string" && fullName.trim()) || data.user?.email || null);
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1033,7 +1039,7 @@ export default function UploadPage() {
           <a href="/bills" className="text-sm text-text-muted transition-colors hover:text-text">
             My bills
           </a>
-          {userEmail && <span className="text-sm text-text-muted">{userEmail}</span>}
+          {userDisplayName && <span className="text-sm text-text-muted">{userDisplayName}</span>}
           <button onClick={handleSignOut} className="text-sm text-text-muted transition-colors hover:text-text">
             Sign out
           </button>
