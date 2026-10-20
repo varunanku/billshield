@@ -85,6 +85,8 @@ export type TaxGroupType = "cgst_sgst" | "utgst" | "igst" | "vat" | "electricity
 
 export type TaxBreakdown = {
   tax_type: TaxGroupType;
+  label: string; // the printed line label(s) this entry covers, e.g. "CGST + SGST" or a single line's own label
+  billed_amount: number; // the actual tax amount billed for this entry (summed across its line(s))
   effective_rate: number; // percent, computed from this bill's own figures
   // Set ONLY when a printed HSN code matched a seeded reference rate for
   // this bill's category AND the billed rate is confirmed higher than
@@ -144,6 +146,8 @@ export function computeTaxBreakdown(
     const overcharge = isConfirmedOvercharge(effective, expectedTotal);
     breakdown.push({
       tax_type: "cgst_sgst",
+      label: "CGST + SGST",
+      billed_amount: cgst.amount + sgst.amount,
       effective_rate: effective,
       expected_rate: overcharge ? expectedTotal : null,
       note: !ratesEqual
@@ -160,6 +164,8 @@ export function computeTaxBreakdown(
     const prefix = cgst ? `CGST ${cgst.ratePercent.toFixed(2)}% + ` : "";
     breakdown.push({
       tax_type: "utgst",
+      label: cgst ? "CGST + UTGST" : "UTGST",
+      billed_amount: (cgst?.amount ?? 0) + utgst.amount,
       effective_rate: effective,
       expected_rate: overcharge ? expectedTotal : null,
       note: overcharge
@@ -174,6 +180,8 @@ export function computeTaxBreakdown(
     const overcharge = isConfirmedOvercharge(igst.ratePercent, expectedIgst);
     breakdown.push({
       tax_type: "igst",
+      label: igst.label,
+      billed_amount: igst.amount,
       effective_rate: igst.ratePercent,
       expected_rate: overcharge ? expectedIgst : null,
       note: overcharge
@@ -188,6 +196,8 @@ export function computeTaxBreakdown(
       handled.add(rate);
       breakdown.push({
         tax_type: "vat",
+        label: rate.label,
+        billed_amount: rate.amount,
         effective_rate: rate.ratePercent,
         expected_rate: null,
         note: `${rate.label} ${rate.ratePercent.toFixed(2)}% -- a foreign VAT, not Indian GST. No comparison applied.`,
@@ -196,6 +206,8 @@ export function computeTaxBreakdown(
       handled.add(rate);
       breakdown.push({
         tax_type: "electricity_duty",
+        label: rate.label,
+        billed_amount: rate.amount,
         effective_rate: rate.ratePercent,
         expected_rate: null,
         note: `${rate.label} ${rate.ratePercent.toFixed(2)}% -- a state electricity duty, not GST. No comparison applied.`,
@@ -212,6 +224,8 @@ export function computeTaxBreakdown(
     const overcharge = isConfirmedOvercharge(rate.ratePercent, expectedTotal);
     breakdown.push({
       tax_type: "other",
+      label: rate.label,
+      billed_amount: rate.amount,
       effective_rate: rate.ratePercent,
       expected_rate: overcharge ? expectedTotal : null,
       note: overcharge
@@ -280,4 +294,46 @@ export function buildTaxBreakdownAddendum(breakdown: TaxBreakdown[], matchingRat
   return `\n\nTax breakdown, computed from this bill's own printed figures (never invented or recomputed by you):\n${lines.join(
     "\n"
   )}\n\nHard rules for tax: never say a bill was undercharged; never suggest the user should have paid more tax; never state an expected rate or a rate difference for any line above that isn't explicitly marked "CONFIRMED"; if a tax question can't be answered from the lines above, say so plainly rather than guessing.`;
+}
+
+// Phase 3 (verdict integration): the one confirmed tax-overcharge finding
+// a bill can surface, if any -- decided purely from computeTaxBreakdown's
+// own output, so it's exactly as conservative as that (no printed HSN
+// match, an exact match, or a lower billed rate all mean null here too).
+// Only the FIRST confirmed group is ever surfaced (CLAUDE.md: one dispute
+// per bill, pointing at one line) -- in practice a bill has at most one
+// GST-style tax scheme anyway.
+export type TaxOverchargeFinding = {
+  label: string; // the tax line(s) this finding is about, e.g. "CGST + SGST"
+  billedAmount: number; // the actual tax amount billed for that line(s) -- the proof-link amount
+  effectiveRatePercent: number;
+  expectedRatePercent: number;
+  hsnPrefix: string | null;
+  sourceUrl: string | null;
+  possibleExcess: number; // taxable amount x (billed rate - expected rate) / 100 -- always > 0
+};
+
+export function findTaxOvercharge(
+  lines: BillLine[],
+  category: string | null,
+  rates: CategoryRate[],
+  printedHsnCodes: string[]
+): TaxOverchargeFinding | null {
+  const breakdown = computeTaxBreakdown(lines, category, rates, printedHsnCodes);
+  const found = breakdown.find((b) => b.expected_rate !== null);
+  if (!found) return null;
+
+  const matchingRate = findMatchingRate(rates, category, printedHsnCodes);
+  const taxableBase = computeEffectiveTaxRates(lines)[0]?.taxableBase ?? 0;
+  const possibleExcess = (taxableBase * (found.effective_rate - found.expected_rate!)) / 100;
+
+  return {
+    label: found.label,
+    billedAmount: found.billed_amount,
+    effectiveRatePercent: found.effective_rate,
+    expectedRatePercent: found.expected_rate!,
+    hsnPrefix: matchingRate?.hsn_prefix ?? null,
+    sourceUrl: matchingRate?.source_url ?? null,
+    possibleExcess,
+  };
 }

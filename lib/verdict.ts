@@ -20,7 +20,8 @@
 //    kind, but the user marked a line "I don't recognise this", or a
 //    promise was made with no comparable amount to check it against.
 // 4. CLEAN: none of the above.
-import { EPSILON, type BillLine, type BillChecks, type RoundedTotalNote } from "./bill-checks.ts";
+import { EPSILON, ROUNDING_TOLERANCE, type BillLine, type BillChecks, type RoundedTotalNote } from "./bill-checks.ts";
+import type { TaxOverchargeFinding } from "./gst.ts";
 
 export type Promise = { statement: string; promisedAmount: number | null };
 
@@ -31,7 +32,7 @@ export type DisputedLine = { label: string; amount: number };
 // requires ("You overpaid Rs X." / "You were charged Rs X more than you
 // were promised." / "Rs X on this bill doesn't add up.") without
 // re-deriving it from the numbers.
-export type ConfirmedErrorReason = "overpaid" | "promise_mismatch" | "mismatch";
+export type ConfirmedErrorReason = "overpaid" | "promise_mismatch" | "mismatch" | "tax_overcharge";
 
 export type Facts = {
   provider: string;
@@ -50,6 +51,15 @@ export type Facts = {
   // arrears/previous-due line whose amount happens to match the payment
   // excess (lib/bill-checks.ts's payment.reconcilingBalanceLabel).
   reconcilingBalanceLabel: string | null;
+  // Set ONLY for reason "tax_overcharge" -- a CONFIRMED finding from
+  // lib/gst.ts#findTaxOvercharge (printed HSN matched, billed rate higher
+  // than the reference). Null for every other outcome/reason.
+  taxFinding: {
+    effectiveRatePercent: number;
+    expectedRatePercent: number;
+    hsnPrefix: string | null;
+    sourceUrl: string | null;
+  } | null;
 };
 
 export type Verdict =
@@ -85,8 +95,13 @@ export function decideVerdict(input: {
   billDate: string;
   checks: BillChecks;
   promise: Promise | null;
+  // Computed by the caller (lib/gst.ts#findTaxOvercharge) -- null whenever
+  // there's no confirmed tax-overcharge finding for this bill, which is
+  // the overwhelmingly common case (no printed HSN match, or none higher
+  // than the reference). Never touches any OTHER outcome's logic below.
+  taxFinding?: TaxOverchargeFinding | null;
 }): Verdict {
-  const { lines, provider, billDate, checks, promise } = input;
+  const { lines, provider, billDate, checks, promise, taxFinding = null } = input;
 
   const baseFacts = (gap: number, disputedLines: DisputedLine[], reconcilingBalanceLabel: string | null = null): Facts => ({
     provider,
@@ -98,6 +113,7 @@ export function decideVerdict(input: {
     billedAmount: checks.billedSum,
     total: checks.effectiveTotal,
     reconcilingBalanceLabel,
+    taxFinding: null,
   });
 
   // Hard evidence: we know exactly what was billed and exactly what was
@@ -146,6 +162,31 @@ export function decideVerdict(input: {
 
   if (unrecognizedLines.length > 0 || promiseUncomparable) {
     return { outcome: "unexplained", tone: "inquiry", facts: baseFacts(0, unrecognizedLines) };
+  }
+
+  // Tax overcharge (Phase 3): checked last, only once every other check
+  // has found nothing -- a bill that already triggers confirmed_error/
+  // cannot_verify/unexplained above for some other reason is completely
+  // unaffected by this; it's purely an ADDITIONAL way for an otherwise-
+  // clean bill to surface a finding, never a change to the others.
+  // Gated on the same Rs-1 "worth anyone's time" threshold as every other
+  // outcome here (shouldDraftEmail/ROUNDING_TOLERANCE) -- a sub-Rs-1
+  // possible excess is treated as if there were no finding at all.
+  if (taxFinding && Math.abs(taxFinding.possibleExcess) >= ROUNDING_TOLERANCE) {
+    return {
+      outcome: "confirmed_error",
+      tone: "confident",
+      reason: "tax_overcharge",
+      facts: {
+        ...baseFacts(-taxFinding.possibleExcess, [{ label: taxFinding.label, amount: taxFinding.billedAmount }]),
+        taxFinding: {
+          effectiveRatePercent: taxFinding.effectiveRatePercent,
+          expectedRatePercent: taxFinding.expectedRatePercent,
+          hsnPrefix: taxFinding.hsnPrefix,
+          sourceUrl: taxFinding.sourceUrl,
+        },
+      },
+    };
   }
 
   return { outcome: "clean", reconciledTotal: checks.effectiveTotal, roundingNote: checks.roundedTotalNote };

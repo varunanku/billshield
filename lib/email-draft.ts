@@ -27,12 +27,17 @@ const PRESET_INSTRUCTIONS: Record<TonePreset, string> = {
     "Firmer still, and note that you will escalate this to a formal complaint or the relevant ombudsman/regulator if it isn't resolved promptly.",
 };
 
-// Every money figure the email is allowed to state, derived from facts
-// alone -- nothing here was ever at the LLM's discretion.
+// Every money (or, for a tax finding, rate percentage) figure the email is
+// allowed to state, derived from facts alone -- nothing here was ever at
+// the LLM's discretion. Rate percentages are included because a rate
+// written with 2 decimals (e.g. "18.00%") is money-shaped enough to match
+// MONEY_TOKEN below -- without this, even templateEmail's own fixed
+// wording would fail its own number guard.
 function factNumbers(facts: Facts): number[] {
   const numbers = [facts.billedAmount, facts.total, Math.abs(facts.gap)];
   if (facts.promisedAmount !== null) numbers.push(facts.promisedAmount);
   for (const line of facts.disputedLines) numbers.push(line.amount);
+  if (facts.taxFinding) numbers.push(facts.taxFinding.effectiveRatePercent, facts.taxFinding.expectedRatePercent);
   return numbers;
 }
 
@@ -119,10 +124,15 @@ Billed amount (as reconciled by the user): Rs ${facts.billedAmount.toFixed(2)}
 ${facts.promisedAmount !== null ? `Promised amount: Rs ${facts.promisedAmount.toFixed(2)}\n` : ""}Disputed line(s):
 ${lineText}
 Difference: Rs ${Math.abs(facts.gap).toFixed(2)} (${facts.gap >= 0 ? "the user appears to have been undercharged or owes more" : "the user appears to have overpaid"})
-${facts.reconcilingBalanceLabel ? `Note: a line labelled "${facts.reconcilingBalanceLabel}" on the bill matches this difference exactly -- mention it as confirming the excess.\n` : ""}
-Tone: ${
+${facts.reconcilingBalanceLabel ? `Note: a line labelled "${facts.reconcilingBalanceLabel}" on the bill matches this difference exactly -- mention it as confirming the excess.\n` : ""}${
+    facts.taxFinding
+      ? `Tax finding (CONFIRMED): the computed tax rate on this bill is ${facts.taxFinding.effectiveRatePercent.toFixed(2)}%, higher than the reference rate of ${facts.taxFinding.expectedRatePercent}%${facts.taxFinding.hsnPrefix ? ` for HSN ${facts.taxFinding.hsnPrefix}` : ""}${facts.taxFinding.sourceUrl ? ` (source: ${facts.taxFinding.sourceUrl})` : ""}. The difference above (Rs ${Math.abs(facts.gap).toFixed(2)}) is the possible excess this higher rate would add. This is a confirmed computed finding, but never state as fact that the provider made an error -- only that the rate should be confirmed.\n`
+      : ""
+  }Tone: ${
     tone === "confident"
-      ? `Confident and direct. State the issue plainly.${
+      ? facts.taxFinding
+        ? `Confident and direct, but not accusatory about intent. State that the tax rate charged is higher than the reference rate for this item's HSN classification, ask the provider to confirm the tax classification applied, and ask them to refund the excess if the rate was applied in error. Do not state as fact that the provider is wrong -- frame it as something to confirm.`
+        : `Confident and direct. State the issue plainly.${
           facts.gap < 0
             ? " Ask for a refund or an adjustment against the next bill."
             : " Ask for a correction."
@@ -170,6 +180,21 @@ export function templateEmail(facts: Facts, tone: Tone): EmailDraft {
     facts.disputedLines.length > 0
       ? facts.disputedLines.map((l) => `${l.label} (Rs ${l.amount.toFixed(2)})`).join(", ")
       : "the charge in question";
+
+  if (tone === "confident" && facts.taxFinding) {
+    const tf = facts.taxFinding;
+    return {
+      subject: `Tax rate query on my ${facts.billDate} bill`,
+      body: `Dear ${facts.provider} Support,
+
+The tax rate charged on my bill dated ${facts.billDate} works out to ${tf.effectiveRatePercent.toFixed(2)}%, which is higher than the ${tf.expectedRatePercent}% rate listed${tf.hsnPrefix ? ` for HSN ${tf.hsnPrefix}` : ""}${tf.sourceUrl ? ` (source: ${tf.sourceUrl})` : ""}.
+
+Could you please confirm the tax classification applied to this charge, and refund the excess of Rs ${Math.abs(facts.gap).toFixed(2)} if it was applied in error? I'd appreciate a reference number for this query.
+
+Regards,
+[Name]`,
+    };
+  }
 
   if (tone === "confident") {
     const overpaid = facts.gap < 0;

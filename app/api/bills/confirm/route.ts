@@ -13,6 +13,7 @@ import {
   type PersistedLine,
 } from "@/lib/bill-checks";
 import { decideVerdict, type Verdict } from "@/lib/verdict";
+import { findTaxOvercharge } from "@/lib/gst";
 
 export const maxDuration = 30;
 
@@ -29,6 +30,12 @@ type ConfirmPayload = {
   billing_period_end: string | null;
   units_consumed: number | null;
   units_consumed_unit: string | null;
+  // Not persisted (no bills column for this, and none is needed past this
+  // one-time computation) -- only ever used right here to feed the tax-
+  // overcharge check below. See lib/gst.ts#findMatchingRate: a category
+  // alone is never enough, this is the one thing that makes a comparison
+  // possible at all.
+  printed_hsn_codes: string[];
   line_items: BillLine[];
   promise: PromiseInput;
 };
@@ -93,6 +100,7 @@ export async function POST(request: Request) {
     billing_period_end,
     units_consumed,
     units_consumed_unit,
+    printed_hsn_codes,
     line_items,
     promise,
   } = validated.data;
@@ -116,7 +124,27 @@ export async function POST(request: Request) {
   const storedBillDate = bill_date || new Date().toISOString().slice(0, 10);
 
   const checks = computeBillChecks(line_items, total);
-  const verdict = decideVerdict({ lines: line_items, total, provider: displayProvider, billDate: storedBillDate, checks, promise });
+
+  // Tax overcharge finding (Phase 3): only ever non-null when the bill
+  // printed an HSN/SAC code that matches a seeded reference rate for its
+  // own category AND the billed rate is confirmed higher than that
+  // reference -- see lib/gst.ts for the full chain. category can be null
+  // (findTaxOvercharge/findMatchingRate already treat null/"other" as
+  // "no comparison possible", so this never needs its own branch here).
+  const { data: rateRows } = category
+    ? await supabase.from("category_rates").select("*").eq("category", category)
+    : { data: [] };
+  const taxFinding = findTaxOvercharge(line_items, category, rateRows ?? [], printed_hsn_codes);
+
+  const verdict = decideVerdict({
+    lines: line_items,
+    total,
+    provider: displayProvider,
+    billDate: storedBillDate,
+    checks,
+    promise,
+    taxFinding,
+  });
 
   const maskedProviderLegalName = provider_legal_name ? maskPII(provider_legal_name) : null;
   // toPersistedLines decides which rows exist and their amount sign/label
@@ -241,6 +269,9 @@ function validatePayload(value: unknown): { ok: true; data: ConfirmPayload } | {
   const billing_period_end = typeof v.billing_period_end === "string" && DATE_RE.test(v.billing_period_end) ? v.billing_period_end : null;
   const units_consumed = typeof v.units_consumed === "number" && Number.isFinite(v.units_consumed) ? v.units_consumed : null;
   const units_consumed_unit = typeof v.units_consumed_unit === "string" ? v.units_consumed_unit : null;
+  const printed_hsn_codes = Array.isArray(v.printed_hsn_codes)
+    ? v.printed_hsn_codes.filter((c): c is string => typeof c === "string")
+    : [];
 
   if (!Array.isArray(v.line_items) || v.line_items.length === 0) {
     return { ok: false, message: "At least one line item is required." };
@@ -285,6 +316,7 @@ function validatePayload(value: unknown): { ok: true; data: ConfirmPayload } | {
       billing_period_end,
       units_consumed,
       units_consumed_unit,
+      printed_hsn_codes,
       line_items,
       promise,
     },

@@ -168,6 +168,23 @@ function validatePayload(
     }
   }
 
+  // Set only for reason "tax_overcharge" (lib/verdict.ts) -- every other
+  // outcome/reason sends null, same as decideVerdict's own baseFacts.
+  let taxFinding: Facts["taxFinding"] = null;
+  if (typeof f.taxFinding === "object" && f.taxFinding !== null) {
+    const tf = f.taxFinding as Record<string, unknown>;
+    const effectiveRatePercent = typeof tf.effectiveRatePercent === "number" ? tf.effectiveRatePercent : null;
+    const expectedRatePercent = typeof tf.expectedRatePercent === "number" ? tf.expectedRatePercent : null;
+    if (effectiveRatePercent !== null && expectedRatePercent !== null) {
+      taxFinding = {
+        effectiveRatePercent,
+        expectedRatePercent,
+        hsnPrefix: typeof tf.hsnPrefix === "string" ? tf.hsnPrefix : null,
+        sourceUrl: typeof tf.sourceUrl === "string" ? tf.sourceUrl : null,
+      };
+    }
+  }
+
   return {
     ok: true,
     data: {
@@ -183,6 +200,7 @@ function validatePayload(
         billedAmount,
         total,
         reconcilingBalanceLabel,
+        taxFinding,
       },
       tonePreset,
     },

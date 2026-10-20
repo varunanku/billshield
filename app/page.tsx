@@ -498,9 +498,10 @@ export default function UploadPage() {
     units_consumed: number | null;
     units_consumed_unit: string | null;
   }>({ category: null, billing_period_start: null, billing_period_end: null, units_consumed: null, units_consumed_unit: null });
-  // Local-only (never sent to confirm -- bills has no column for this, and
-  // none is needed): feeds the tax-rate comparison (lib/gst.ts) and the
-  // follow-up chat's grounding facts, both client-side for this session.
+  // Not stored (bills has no column for this) -- sent to /api/bills/confirm
+  // as one-time input to the tax-overcharge check there, and used directly
+  // here for the live tax-rate comparison (lib/gst.ts) and the follow-up
+  // chat's grounding facts.
   const [printedHsnCodes, setPrintedHsnCodes] = useState<string[]>([]);
   const [billDate, setBillDate] = useState("");
   const [total, setTotal] = useState("");
@@ -734,6 +735,7 @@ export default function UploadPage() {
           provider,
           provider_legal_name: providerLegalName,
           ...extraFields,
+          printed_hsn_codes: printedHsnCodes,
           bill_date: billDate,
           total: parsedTotal,
           line_items: parsedLines,
@@ -1501,12 +1503,23 @@ export default function UploadPage() {
                     ? stage.verdict.facts.gap >= 0
                       ? `You were charged Rs ${money(Math.abs(stage.verdict.facts.gap))} more than you were promised.`
                       : `You were promised Rs ${money(Math.abs(stage.verdict.facts.gap))} more than you were charged.`
+                    : stage.verdict.reason === "tax_overcharge" && stage.verdict.facts.taxFinding
+                    ? `The tax rate on this bill (${stage.verdict.facts.taxFinding.effectiveRatePercent.toFixed(2)}%) is higher than the rate listed for HSN ${
+                        stage.verdict.facts.taxFinding.hsnPrefix ?? "?"
+                      } (${stage.verdict.facts.taxFinding.expectedRatePercent}%).`
                     : `Rs ${money(Math.abs(stage.verdict.facts.gap))} on this bill doesn't add up.`}
                 </p>
-                {stage.verdict.facts.reconcilingBalanceLabel && (
+                {stage.verdict.reason === "tax_overcharge" && stage.verdict.facts.taxFinding ? (
                   <p className="mt-1 text-sm text-text-muted">
-                    This matches the &quot;{stage.verdict.facts.reconcilingBalanceLabel}&quot; line on your bill.
+                    Possible excess: Rs {money(Math.abs(stage.verdict.facts.gap))}
+                    {stage.verdict.facts.taxFinding.sourceUrl && <> -- source: {stage.verdict.facts.taxFinding.sourceUrl}</>}
                   </p>
+                ) : (
+                  stage.verdict.facts.reconcilingBalanceLabel && (
+                    <p className="mt-1 text-sm text-text-muted">
+                      This matches the &quot;{stage.verdict.facts.reconcilingBalanceLabel}&quot; line on your bill.
+                    </p>
+                  )
                 )}
               </div>
             </div>
