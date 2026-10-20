@@ -1097,9 +1097,9 @@ export default function UploadPage() {
       {stage.name === "upload" && (
         <>
           <p className="mb-3 rounded-md bg-warning-soft px-3 py-2 text-sm text-warning">
-            Your bill image is read by an AI provider (Groq) to pull out the line items. Please mask your name,
-            address, phone number and account number before uploading -- we also run an automatic backstop, but
-            masking it yourself first is safer.
+            Your bill is read by an AI model to pull out the line items. Please mask your name, address, phone
+            number and any other sensitive details before uploading -- we also run an automatic backup mask, but
+            covering it yourself first is safer.
           </p>
           <form onSubmit={handleUpload} className="flex flex-col gap-3">
             <label
