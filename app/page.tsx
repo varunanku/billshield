@@ -19,9 +19,10 @@ import { shouldDraftEmail, type Verdict } from "@/lib/verdict";
 import { MAX_FOLLOWUP_MESSAGES, type FollowupBillContext, type FollowupReply, type Correction } from "@/lib/followup";
 import type { TonePreset } from "@/lib/email-draft";
 import { isSuspiciousBillDate } from "@/lib/date-check";
-import { computeTaxBreakdown, summarizeTaxBreakdown, type CategoryRate } from "@/lib/gst";
+import { computeTaxBreakdown, summarizeTaxBreakdown, computeEffectiveTaxRates, type CategoryRate } from "@/lib/gst";
 import { ThemeSwitcher } from "@/app/theme-switcher";
-import { buildThankYouMessage } from "@/lib/thank-you";
+import { buildThankYouMessage, UNKNOWN_PROVIDER } from "@/lib/thank-you";
+import { buildSuggestionChips } from "@/lib/chat-chips";
 
 type ExtractedBill = {
   provider: string | null;
@@ -460,6 +461,30 @@ export default function UploadPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Drives the "Is this higher than my last {provider} bill?" suggestion
+  // chip -- just an existence check (RLS already scopes this to the
+  // signed-in user's own bills), never a comparison. The actual comparison,
+  // if the user taps that chip or asks it themselves, is resolved by the
+  // existing get_history chat path (lib/followup.ts), untouched here.
+  const [hasProviderHistory, setHasProviderHistory] = useState(false);
+  useEffect(() => {
+    if (stage.name !== "done") return;
+    const knownProvider = stage.bill.provider && stage.bill.provider !== UNKNOWN_PROVIDER ? stage.bill.provider : null;
+    let cancelled = false;
+    // Always resolved asynchronously (even the "nothing to look up" case),
+    // never a direct setState call in the effect body itself.
+    const query = knownProvider
+      ? supabase.from("bills").select("id").eq("provider_name", knownProvider).neq("id", stage.bill.id).limit(1)
+      : Promise.resolve({ data: [] as { id: string }[] });
+    query.then(({ data }) => {
+      if (!cancelled) setHasProviderHistory((data?.length ?? 0) > 0);
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stage]);
+
   const [provider, setProvider] = useState("");
   const [providerLegalName, setProviderLegalName] = useState<string | null>(null);
   // Carried through from extraction to confirm as-is -- not user-editable
@@ -874,6 +899,23 @@ export default function UploadPage() {
   const draftingEmail =
     stage.name === "done" && verdictDraftsEmail(stage.verdict) && emailDraft === null && emailError === null;
 
+  // Suggestion chips above the follow-up chat input -- chosen by code from
+  // this bill's own facts (never the LLM), only when the chat can actually
+  // answer them. Recomputed on every render from cheap, already-available
+  // values; not worth a useMemo.
+  const suggestionChips =
+    stage.name === "done"
+      ? buildSuggestionChips({
+          effectiveTaxRatePercent: (() => {
+            const rates = computeEffectiveTaxRates(stage.bill.lineItems);
+            return rates.length > 0 ? rates.reduce((s, r) => s + r.ratePercent, 0) : null;
+          })(),
+          flaggedLineLabel: "facts" in stage.verdict ? stage.verdict.facts.disputedLines[0]?.label ?? null : null,
+          hasProviderHistory,
+          provider: stage.bill.provider,
+        })
+      : [];
+
   async function handleCopyEmail() {
     if (!emailDraft) return;
     await navigator.clipboard.writeText(`Subject: ${emailDraft.subject}\n\n${emailDraft.body}`);
@@ -994,9 +1036,12 @@ export default function UploadPage() {
     };
   }
 
-  async function handleAskQuestion() {
+  // questionOverride lets a tapped suggestion chip send its own question
+  // without first round-tripping through chatInput's state -- same path,
+  // same limit, same everything else, from here.
+  async function handleAskQuestion(questionOverride?: string) {
     if (stage.name !== "done") return;
-    const question = chatInput.trim();
+    const question = (questionOverride ?? chatInput).trim();
     if (!question || chatSending || chatLimitReached) return;
 
     setChatInput("");
@@ -1616,7 +1661,29 @@ export default function UploadPage() {
           )}
 
           <div className={card}>
-            <p className="mb-2 font-bold">Questions about this bill?</p>
+            <p className="mb-1 flex items-center gap-1.5 font-bold">
+              {userFullName ? `${userFullName.trim().split(/\s+/)[0]}, got questions about this bill?` : "Questions about this bill?"}
+              <InfoTooltip text="Can: explain any line, the tax rate, how the total was computed, compare with your earlier bills from the same provider, and fix a value you think was misread. Can't: contact your provider, see your paper bill, or give legal or financial advice." />
+            </p>
+            <p className="mb-3 text-sm text-text-muted">
+              Ask anything about this bill -- it can explain a line, the tax rate, or your total, and compare with
+              earlier bills from this provider. It can&apos;t contact your provider or see your paper bill.
+            </p>
+            {chatMessages.length === 0 && stage.name === "done" && suggestionChips.length > 0 && (
+              <div className="mb-3 flex flex-wrap gap-2">
+                {suggestionChips.map((chip, i) => (
+                  <button
+                    key={i}
+                    type="button"
+                    onClick={() => handleAskQuestion(chip.question)}
+                    disabled={chatSending || chatLimitReached}
+                    className="rounded-full border border-border bg-surface px-3 py-1.5 text-xs font-medium text-text transition-colors hover:border-accent hover:text-accent disabled:opacity-40"
+                  >
+                    {chip.label}
+                  </button>
+                ))}
+              </div>
+            )}
             {chatMessages.length > 0 && stage.name === "done" && (
               <div className="mb-3 flex flex-col gap-2">
                 {chatMessages.map((m, i) => {
@@ -1701,7 +1768,7 @@ export default function UploadPage() {
                 />
                 <button
                   type="button"
-                  onClick={handleAskQuestion}
+                  onClick={() => handleAskQuestion()}
                   disabled={chatSending || !chatInput.trim()}
                   className={buttonPrimary}
                 >

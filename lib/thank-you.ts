@@ -1,7 +1,7 @@
 // Pure, no network -- the friendly confirmation shown after Copy/Open in
 // email app/"I've sent it". Never claims BillShield itself sent anything;
 // it only thanks the user for using the tool and wishes them luck.
-const UNKNOWN_PROVIDER = "your provider"; // same sentinel app/api/bills/confirm/route.ts falls back to
+export const UNKNOWN_PROVIDER = "your provider"; // same sentinel app/api/bills/confirm/route.ts falls back to
 
 export function buildThankYouMessage(fullName: string | null, provider: string | null): string {
   const firstName = fullName?.trim().split(/\s+/)[0] || null;
