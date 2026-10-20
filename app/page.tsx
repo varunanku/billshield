@@ -1554,6 +1554,18 @@ export default function UploadPage() {
             </div>
           )}
 
+          {/* Only once there's an actual draft to explain -- not while
+              "Drafting..." or on an error, and never for a clean verdict
+              (verdictDraftsEmail is already false there, same gate as the
+              email card above). */}
+          {verdictDraftsEmail(stage.verdict) && emailDraft && (
+            <p className="text-sm text-text-muted">
+              This message reflects our understanding of the issue found on your bill -- check it matches what you
+              see on your paper bill. You can send it as-is, regenerate it in a different tone, write your own, or
+              use Copy / Open in email app to send it directly.
+            </p>
+          )}
+
           <div className={card}>
             <p className="mb-2 font-bold">Questions about this bill?</p>
             {chatMessages.length > 0 && stage.name === "done" && (
