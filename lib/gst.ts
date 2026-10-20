@@ -1,10 +1,15 @@
-// GST reference (Phase 4) -- pure, no network. Every rate a bill actually
-// shows is computed here (tax / taxable base), in code, never asked of
-// the LLM. A seeded category_rates row is reference context only: the
-// chat may mention it alongside the computed rate and its source, never
-// as a replacement for the computed one, and never as a claim the bill's
-// own rate is correct or incorrect (hard rule 5 -- the app can't confirm
-// legal/policy correctness, only arithmetic).
+// GST reference (Phase 4, hardened later) -- pure, no network. Every rate
+// a bill actually shows is computed here (tax / taxable base), in code,
+// never asked of the LLM. A seeded category_rates row is reference
+// context only, and is NEVER compared against unless the bill itself
+// prints an HSN/SAC code that matches that row's hsn_prefix -- a category
+// alone (LLM-assigned, a closed-list guess) is never enough to accuse a
+// bill of being wrong. Even then, the only thing this app ever surfaces
+// is a CONFIRMED overcharge (billed rate higher than the expected one,
+// beyond a small rounding tolerance): a lower-than-expected billed rate,
+// or an exact match, produces no message anywhere (hard rule 5 -- the app
+// can't confirm legal/policy correctness, and "you paid too little tax"
+// is not this app's business to suggest).
 import type { BillLine } from "./bill-checks.ts";
 
 export type EffectiveTaxRate = {
@@ -41,41 +46,30 @@ export type CategoryRate = {
   effective_from: string | null;
 };
 
-// Picks the single best reference row for this bill, if any: an
-// item_keyword match (against any tax/charge line label) beats a bare
-// category match, and a row with no sourced rate (gst_rate_total null --
-// a seeded TODO placeholder) is never returned, since it has nothing
-// useful to say.
-export function findMatchingRate(rates: CategoryRate[], category: string | null, lineLabels: string[]): CategoryRate | null {
-  const sourced = rates.filter((r) => r.category === category && r.gst_rate_total !== null);
-  if (sourced.length === 0) return null;
-
-  const lowerLabels = lineLabels.map((l) => l.toLowerCase());
-  const keywordMatch = sourced.find((r) => r.item_keyword && lowerLabels.some((l) => l.includes(r.item_keyword!.toLowerCase())));
-  if (keywordMatch) return keywordMatch;
-
-  // No keyword matched -- prefer a bare (no item_keyword) category-wide
-  // row as the generic fallback over some other keyword-specific row that
-  // just happened not to match this bill.
-  const bareMatch = sourced.find((r) => !r.item_keyword);
-  return bareMatch ?? sourced[0];
+// Digits only -- a printed code may include spaces/dashes ("8509 00"),
+// and a seeded hsn_prefix is always plain digits.
+function normalizeHsn(code: string): string {
+  return code.replace(/\D/g, "");
 }
 
-// The block appended to the follow-up chat's system prompt -- the model
-// is handed the computed rate(s) and the matching reference (if any) as
-// plain facts, same as every other number in that prompt.
-export function buildGstAddendum(effectiveRates: EffectiveTaxRate[], matchingRate: CategoryRate | null): string {
-  if (effectiveRates.length === 0) return "";
+// The ONLY way a seeded reference rate is ever matched to a bill: the
+// bill's own category (never "other"/unknown -- that's still a guess,
+// just a coarser one) AND at least one code the bill itself printed
+// (never inferred) whose digits start with a seeded row's hsn_prefix.
+// Category-only matching (the old behaviour) is intentionally gone --
+// it's exactly the "category guessing" this was tightened against.
+export function findMatchingRate(rates: CategoryRate[], category: string | null, printedHsnCodes: string[]): CategoryRate | null {
+  if (!category || category === "other") return null;
+  const normalizedCodes = printedHsnCodes.map(normalizeHsn).filter((c) => c.length > 0);
+  if (normalizedCodes.length === 0) return null;
 
-  const computed = effectiveRates
-    .map((r) => `- ${r.label}: Rs ${r.amount.toFixed(2)} on a taxable base of Rs ${r.taxableBase.toFixed(2)} = ${r.ratePercent.toFixed(2)}%`)
-    .join("\n");
-
-  const reference = matchingRate
-    ? `Reference GST rate for this category${matchingRate.item_keyword ? ` (${matchingRate.item_keyword})` : ""}: ${matchingRate.gst_rate_total}% (source: ${matchingRate.source_url ?? "not given"}).`
-    : "No seeded reference rate matches this bill's category -- if asked, say the bill shows the computed rate above and the app has no reference rate for this item, rather than guessing whether it's correct.";
-
-  return `\n\nGST rates computed from this bill's own printed figures (tax / taxable amount), never invented:\n${computed}\n\n${reference}`;
+  const sourced = rates.filter((r) => r.category === category && r.gst_rate_total !== null && r.hsn_prefix);
+  return (
+    sourced.find((r) => {
+      const prefix = normalizeHsn(r.hsn_prefix!);
+      return prefix.length > 0 && normalizedCodes.some((code) => code.startsWith(prefix));
+    }) ?? null
+  );
 }
 
 // --- Tax line recognition and rate verification ------------------------
@@ -91,15 +85,20 @@ export type TaxGroupType = "cgst_sgst" | "utgst" | "igst" | "vat" | "electricity
 
 export type TaxBreakdown = {
   tax_type: TaxGroupType;
-  effective_rate: number; // percent
-  expected_rate: number | null; // percent, from category_rates -- null when there's nothing to compare against
-  rate_matches: boolean | null; // null when expected_rate is null (nothing to compare)
+  effective_rate: number; // percent, computed from this bill's own figures
+  // Set ONLY when a printed HSN code matched a seeded reference rate for
+  // this bill's category AND the billed rate is confirmed higher than
+  // that reference, beyond RATE_TOLERANCE_POINTS -- i.e. a confirmed
+  // overcharge finding. Null in every other case: no printed code, no
+  // match, an exact match, or a LOWER billed rate -- none of those are
+  // ever reported anywhere (no "expected" text, no chat mention).
+  expected_rate: number | null;
   note: string;
 };
 
-// Percentage-point tolerance for "matches" -- real GST slabs (5/12/18/28)
-// are far enough apart that this only absorbs rounding, never papers over
-// a real slab mismatch (e.g. 5% vs 18%).
+// Percentage-point tolerance for "confirmed higher" -- real GST slabs
+// (5/12/18/28) are far enough apart that this only absorbs rounding,
+// never papers over a real slab-level overcharge.
 const RATE_TOLERANCE_POINTS = 0.5;
 
 const CGST_LABEL = /\bcgst\b/i;
@@ -113,10 +112,21 @@ function rateOf(rates: EffectiveTaxRate[], pattern: RegExp): EffectiveTaxRate | 
   return rates.find((r) => pattern.test(r.label));
 }
 
-export function computeTaxBreakdown(lines: BillLine[], category: string | null, rates: CategoryRate[]): TaxBreakdown[] {
+// true only when there's a reference rate AND the bill's own rate is
+// confirmedly higher than it -- the one and only condition this app ever
+// surfaces as a finding (see the file header).
+function isConfirmedOvercharge(effectiveRate: number, referenceRate: number | null): boolean {
+  return referenceRate !== null && effectiveRate - referenceRate > RATE_TOLERANCE_POINTS;
+}
+
+export function computeTaxBreakdown(
+  lines: BillLine[],
+  category: string | null,
+  rates: CategoryRate[],
+  printedHsnCodes: string[] = []
+): TaxBreakdown[] {
   const effectiveRates = computeEffectiveTaxRates(lines);
-  const lineLabels = lines.map((l) => l.label);
-  const matchingRate = findMatchingRate(rates, category, lineLabels);
+  const matchingRate = findMatchingRate(rates, category, printedHsnCodes);
   const expectedTotal = matchingRate?.gst_rate_total ?? null;
   const expectedIgst = matchingRate?.igst ?? null;
 
@@ -131,54 +141,44 @@ export function computeTaxBreakdown(lines: BillLine[], category: string | null, 
     handled.add(cgst).add(sgst);
     const ratesEqual = Math.abs(cgst.ratePercent - sgst.ratePercent) <= RATE_TOLERANCE_POINTS;
     const effective = cgst.ratePercent + sgst.ratePercent;
-    const matches = expectedTotal !== null ? Math.abs(effective - expectedTotal) <= RATE_TOLERANCE_POINTS : null;
+    const overcharge = isConfirmedOvercharge(effective, expectedTotal);
     breakdown.push({
       tax_type: "cgst_sgst",
       effective_rate: effective,
-      expected_rate: expectedTotal,
-      rate_matches: matches,
+      expected_rate: overcharge ? expectedTotal : null,
       note: !ratesEqual
         ? `CGST (${cgst.ratePercent.toFixed(2)}%) and SGST (${sgst.ratePercent.toFixed(2)}%) should be equal but aren't -- worth checking.`
-        : matches === null
-          ? `CGST ${cgst.ratePercent.toFixed(2)}% + SGST ${sgst.ratePercent.toFixed(2)}% = ${effective.toFixed(2)}% total GST. No reference rate for this category.`
-          : matches
-            ? `CGST ${cgst.ratePercent.toFixed(2)}% + SGST ${sgst.ratePercent.toFixed(2)}% = ${effective.toFixed(2)}% total GST, matching the expected rate for this category.`
-            : `CGST ${cgst.ratePercent.toFixed(2)}% + SGST ${sgst.ratePercent.toFixed(2)}% = ${effective.toFixed(2)}% total GST -- expected ${expectedTotal}% for this category.`,
+        : overcharge
+          ? `CGST ${cgst.ratePercent.toFixed(2)}% + SGST ${sgst.ratePercent.toFixed(2)}% = ${effective.toFixed(2)}% total GST -- higher than the expected ${expectedTotal}% for this HSN/category.`
+          : `CGST ${cgst.ratePercent.toFixed(2)}% + SGST ${sgst.ratePercent.toFixed(2)}% = ${effective.toFixed(2)}% total GST.`,
     });
   } else if (utgst) {
     handled.add(utgst);
     if (cgst) handled.add(cgst);
     const effective = (cgst?.ratePercent ?? 0) + utgst.ratePercent;
-    const matches = expectedTotal !== null ? Math.abs(effective - expectedTotal) <= RATE_TOLERANCE_POINTS : null;
+    const overcharge = isConfirmedOvercharge(effective, expectedTotal);
+    const prefix = cgst ? `CGST ${cgst.ratePercent.toFixed(2)}% + ` : "";
     breakdown.push({
       tax_type: "utgst",
       effective_rate: effective,
-      expected_rate: expectedTotal,
-      rate_matches: matches,
-      note:
-        matches === null
-          ? `${cgst ? `CGST ${cgst.ratePercent.toFixed(2)}% + ` : ""}UTGST ${utgst.ratePercent.toFixed(2)}% = ${effective.toFixed(2)}% total GST. No reference rate for this category.`
-          : matches
-            ? `${cgst ? `CGST ${cgst.ratePercent.toFixed(2)}% + ` : ""}UTGST ${utgst.ratePercent.toFixed(2)}% = ${effective.toFixed(2)}% total GST, matching the expected rate for this category.`
-            : `${cgst ? `CGST ${cgst.ratePercent.toFixed(2)}% + ` : ""}UTGST ${utgst.ratePercent.toFixed(2)}% = ${effective.toFixed(2)}% total GST -- expected ${expectedTotal}% for this category.`,
+      expected_rate: overcharge ? expectedTotal : null,
+      note: overcharge
+        ? `${prefix}UTGST ${utgst.ratePercent.toFixed(2)}% = ${effective.toFixed(2)}% total GST -- higher than the expected ${expectedTotal}% for this HSN/category.`
+        : `${prefix}UTGST ${utgst.ratePercent.toFixed(2)}% = ${effective.toFixed(2)}% total GST.`,
     });
   }
 
   const igst = rateOf(effectiveRates, IGST_LABEL);
   if (igst && !handled.has(igst)) {
     handled.add(igst);
-    const matches = expectedIgst !== null ? Math.abs(igst.ratePercent - expectedIgst) <= RATE_TOLERANCE_POINTS : null;
+    const overcharge = isConfirmedOvercharge(igst.ratePercent, expectedIgst);
     breakdown.push({
       tax_type: "igst",
       effective_rate: igst.ratePercent,
-      expected_rate: expectedIgst,
-      rate_matches: matches,
-      note:
-        matches === null
-          ? `IGST ${igst.ratePercent.toFixed(2)}%. No reference IGST rate for this category.`
-          : matches
-            ? `IGST ${igst.ratePercent.toFixed(2)}%, matching the expected rate for this category.`
-            : `IGST ${igst.ratePercent.toFixed(2)}% -- expected ${expectedIgst}% for this category.`,
+      expected_rate: overcharge ? expectedIgst : null,
+      note: overcharge
+        ? `IGST ${igst.ratePercent.toFixed(2)}% -- higher than the expected ${expectedIgst}% for this HSN/category.`
+        : `IGST ${igst.ratePercent.toFixed(2)}%.`,
     });
   }
 
@@ -190,7 +190,6 @@ export function computeTaxBreakdown(lines: BillLine[], category: string | null, 
         tax_type: "vat",
         effective_rate: rate.ratePercent,
         expected_rate: null,
-        rate_matches: null,
         note: `${rate.label} ${rate.ratePercent.toFixed(2)}% -- a foreign VAT, not Indian GST. No comparison applied.`,
       });
     } else if (ELECTRICITY_LABEL.test(rate.label)) {
@@ -199,7 +198,6 @@ export function computeTaxBreakdown(lines: BillLine[], category: string | null, 
         tax_type: "electricity_duty",
         effective_rate: rate.ratePercent,
         expected_rate: null,
-        rate_matches: null,
         note: `${rate.label} ${rate.ratePercent.toFixed(2)}% -- a state electricity duty, not GST. No comparison applied.`,
       });
     }
@@ -211,18 +209,14 @@ export function computeTaxBreakdown(lines: BillLine[], category: string | null, 
   // rather than a split CGST+SGST pair.
   for (const rate of effectiveRates) {
     if (handled.has(rate)) continue;
-    const matches = expectedTotal !== null ? Math.abs(rate.ratePercent - expectedTotal) <= RATE_TOLERANCE_POINTS : null;
+    const overcharge = isConfirmedOvercharge(rate.ratePercent, expectedTotal);
     breakdown.push({
       tax_type: "other",
       effective_rate: rate.ratePercent,
-      expected_rate: expectedTotal,
-      rate_matches: matches,
-      note:
-        matches === null
-          ? `${rate.label} ${rate.ratePercent.toFixed(2)}%. No reference rate for this line.`
-          : matches
-            ? `${rate.label} ${rate.ratePercent.toFixed(2)}%, matching the expected rate for this category.`
-            : `${rate.label} ${rate.ratePercent.toFixed(2)}% -- expected ${expectedTotal}% for this category.`,
+      expected_rate: overcharge ? expectedTotal : null,
+      note: overcharge
+        ? `${rate.label} ${rate.ratePercent.toFixed(2)}% -- higher than the expected ${expectedTotal}% for this HSN/category.`
+        : `${rate.label} ${rate.ratePercent.toFixed(2)}%.`,
     });
   }
 
@@ -231,8 +225,9 @@ export function computeTaxBreakdown(lines: BillLine[], category: string | null, 
 
 // Short line for the review/verdict screen -- one clause per tax group,
 // joined, built directly from the breakdown's own fields (never by
-// re-parsing `note`), e.g. "Tax: CGST 2.50% + SGST 2.50% = 5.00% GST
-// (expected for groceries: 5%, matches)".
+// re-parsing `note`). Plain and neutral ("Tax: 5.00% GST") unless a
+// confirmed overcharge exists, in which case (and ONLY then) it names the
+// expected rate.
 const TAX_TYPE_LABEL: Record<TaxGroupType, string> = {
   cgst_sgst: "GST",
   utgst: "GST",
@@ -241,40 +236,6 @@ const TAX_TYPE_LABEL: Record<TaxGroupType, string> = {
   electricity_duty: "Electricity Duty",
   other: "Tax",
 };
-
-// The block appended to the follow-up chat's system prompt -- supersedes
-// buildGstAddendum with the grouped/classified breakdown (CGST+SGST
-// pairing, VAT/electricity-duty called out as not-GST, etc.) so the model
-// can answer "why is the tax 2.5% not 9%" with the full picture: the
-// computed rate, the matching reference (HSN, source, effective date) if
-// any, and whether they match -- every number still code-computed, the
-// model only ever phrases it.
-export function buildTaxBreakdownAddendum(breakdown: TaxBreakdown[], matchingRate: CategoryRate | null): string {
-  if (breakdown.length === 0) return "";
-
-  const lines = breakdown.map((b) => {
-    const parts = [`- ${TAX_TYPE_LABEL[b.tax_type]}: ${b.effective_rate.toFixed(2)}% (computed from this bill's own figures)`];
-    if (b.tax_type === "cgst_sgst" || b.tax_type === "utgst" || b.tax_type === "igst" || b.tax_type === "other") {
-      if (b.expected_rate !== null) {
-        parts.push(
-          `expected rate for this category${matchingRate?.hsn_prefix ? ` (HSN ${matchingRate.hsn_prefix})` : ""}: ${b.expected_rate}%` +
-            (matchingRate?.source_url ? ` per ${matchingRate.source_url}` : "") +
-            (matchingRate?.effective_from ? ` effective ${matchingRate.effective_from}` : "") +
-            ` -- ${b.rate_matches ? "matches" : "does not match"}`
-        );
-      } else {
-        parts.push("no seeded reference rate for this category -- say so plainly if asked, don't guess whether it's correct");
-      }
-    } else if (b.tax_type === "vat") {
-      parts.push("this is a foreign VAT, not Indian GST -- never compare it against an Indian GST rate");
-    } else if (b.tax_type === "electricity_duty") {
-      parts.push("this is a state-level electricity duty, not GST -- never compare it against a GST rate");
-    }
-    return parts.join("; ");
-  });
-
-  return `\n\nTax breakdown, computed from this bill's own printed figures (never invented or recomputed by you):\n${lines.join("\n")}`;
-}
 
 export function summarizeTaxBreakdown(breakdown: TaxBreakdown[]): string | null {
   if (breakdown.length === 0) return null;
@@ -285,9 +246,38 @@ export function summarizeTaxBreakdown(breakdown: TaxBreakdown[]): string | null 
         const rate = `${b.effective_rate.toFixed(2)}% ${TAX_TYPE_LABEL[b.tax_type]}`;
         if (b.tax_type === "vat") return `${rate} (not Indian GST)`;
         if (b.tax_type === "electricity_duty") return `${rate} (state levy, not GST)`;
-        if (b.expected_rate === null) return rate;
-        return `${rate} (expected: ${b.expected_rate}%, ${b.rate_matches ? "matches" : "doesn't match"})`;
+        if (b.expected_rate !== null) return `${rate} (higher than the expected ${b.expected_rate}% -- flagged)`;
+        return rate;
       })
       .join("; ")
   );
+}
+
+// The block appended to the follow-up chat's system prompt. Only ever
+// states an expected/reference rate for a group with a CONFIRMED
+// overcharge (expected_rate !== null) -- every other group is handed to
+// the model as a plain computed figure with explicit instructions never
+// to compare it, guess a reference, or suggest the bill undercharged.
+export function buildTaxBreakdownAddendum(breakdown: TaxBreakdown[], matchingRate: CategoryRate | null): string {
+  if (breakdown.length === 0) return "";
+
+  const lines = breakdown.map((b) => {
+    const label = TAX_TYPE_LABEL[b.tax_type];
+    if (b.expected_rate !== null) {
+      const sourcePart = matchingRate?.source_url ? ` (source: ${matchingRate.source_url})` : "";
+      const hsnPart = matchingRate?.hsn_prefix ? ` for HSN ${matchingRate.hsn_prefix}` : "";
+      return `- ${label}: ${b.effective_rate.toFixed(2)}% (computed from this bill's own figures) -- CONFIRMED higher than the expected ${b.expected_rate}%${hsnPart}${sourcePart}. This is a confirmed finding you may mention.`;
+    }
+    if (b.tax_type === "vat") {
+      return `- ${label}: ${b.effective_rate.toFixed(2)}% -- a foreign VAT, not Indian GST. Never compare it to a GST rate.`;
+    }
+    if (b.tax_type === "electricity_duty") {
+      return `- ${label}: ${b.effective_rate.toFixed(2)}% -- a state-level electricity duty, not GST. Never compare it to a GST rate.`;
+    }
+    return `- ${label}: ${b.effective_rate.toFixed(2)}% (computed from this bill's own figures). No confirmed reference for this line -- if asked whether this rate is correct, say there's no confirmed reference, never guess or invent a comparison figure.`;
+  });
+
+  return `\n\nTax breakdown, computed from this bill's own printed figures (never invented or recomputed by you):\n${lines.join(
+    "\n"
+  )}\n\nHard rules for tax: never say a bill was undercharged; never suggest the user should have paid more tax; never state an expected rate or a rate difference for any line above that isn't explicitly marked "CONFIRMED"; if a tax question can't be answered from the lines above, say so plainly rather than guessing.`;
 }

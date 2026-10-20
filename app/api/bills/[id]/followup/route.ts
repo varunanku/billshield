@@ -124,12 +124,14 @@ export async function POST(request: Request, routeContext: { params: Promise<{ i
     const hasTaxLines = lineItems.some((li) => li.role === "tax");
     if (hasTaxLines) {
       const { data: rateRows } = await supabase.from("category_rates").select("*").eq("category", bill.category ?? "");
-      const breakdown = computeTaxBreakdown(lineItems, bill.category, rateRows ?? []);
-      const matchingRate = findMatchingRate(
-        rateRows ?? [],
-        bill.category,
-        lineItems.map((li) => li.label)
-      );
+      // printedHsnCodes: [] until Phase 2 threads the bill's own printed
+      // codes through this payload -- a category match alone (what this
+      // used to do) is exactly the "category guessing" finding this was
+      // tightened against, so an empty list here is the safe default: it
+      // simply means no comparison is made yet, never a false one.
+      const printedHsnCodes: string[] = [];
+      const breakdown = computeTaxBreakdown(lineItems, bill.category, rateRows ?? [], printedHsnCodes);
+      const matchingRate = findMatchingRate(rateRows ?? [], bill.category, printedHsnCodes);
       gstAddendum = buildTaxBreakdownAddendum(breakdown, matchingRate);
     }
 
