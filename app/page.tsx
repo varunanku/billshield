@@ -910,18 +910,33 @@ export default function UploadPage() {
 
   // Suggestion chips above the follow-up chat input -- chosen by code from
   // this bill's own facts (never the LLM), only when the chat can actually
-  // answer them. Recomputed on every render from cheap, already-available
-  // values; not worth a useMemo.
+  // answer them. In rounds: the same pool, minus whatever's already been
+  // asked (typed or tapped), shown again before the 2nd and 3rd questions
+  // -- never a 4th round, see askedQuestions.length < 3 below. Recomputed
+  // on every render from cheap, already-available values; not worth a
+  // useMemo.
+  const askedQuestions = chatMessages
+    .filter((m): m is Extract<ChatEntry, { kind: "text" }> => m.kind === "text" && m.role === "user")
+    .map((m) => m.content);
   const suggestionChips =
-    stage.name === "done"
+    stage.name === "done" && askedQuestions.length < 3
       ? buildSuggestionChips({
-          effectiveTaxRatePercent: (() => {
-            const rates = computeEffectiveTaxRates(stage.bill.lineItems);
-            return rates.length > 0 ? rates.reduce((s, r) => s + r.ratePercent, 0) : null;
-          })(),
+          hasTaxLines: stage.bill.lineItems.some((li) => li.role === "tax"),
+          confirmedTaxFinding: stage.verdict.outcome === "confirmed_error" && stage.verdict.reason === "tax_overcharge",
+          effectiveTaxRatePercent:
+            stage.verdict.outcome === "confirmed_error" && stage.verdict.reason === "tax_overcharge" && stage.verdict.facts.taxFinding
+              ? stage.verdict.facts.taxFinding.effectiveRatePercent
+              : (() => {
+                  const rates = computeEffectiveTaxRates(stage.bill.lineItems);
+                  return rates.length > 0 ? rates.reduce((s, r) => s + r.ratePercent, 0) : null;
+                })(),
           flaggedLineLabel: "facts" in stage.verdict ? stage.verdict.facts.disputedLines[0]?.label ?? null : null,
           hasProviderHistory,
           provider: stage.bill.provider,
+          hasCharges: stage.bill.lineItems.some((li) => li.role === "charge"),
+          hasDiscount: stage.bill.lineItems.some((li) => li.role === "discount"),
+          verdictOutcome: stage.verdict.outcome,
+          askedQuestions,
         })
       : [];
 
@@ -1692,7 +1707,7 @@ export default function UploadPage() {
               Ask anything about this bill -- it can explain a line, the tax rate, or your total, and compare with
               earlier bills from this provider. It can&apos;t contact your provider or see your paper bill.
             </p>
-            {chatMessages.length === 0 && stage.name === "done" && suggestionChips.length > 0 && (
+            {!chatSending && suggestionChips.length > 0 && (
               <div className="mb-3 flex flex-wrap gap-2">
                 {suggestionChips.map((chip, i) => (
                   <button
