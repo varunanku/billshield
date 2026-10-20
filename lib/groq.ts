@@ -19,6 +19,7 @@ export type ExtractedBill = {
   billing_period_end: string | null;
   units_consumed: number | null;
   units_consumed_unit: string | null;
+  printed_hsn_codes: string[]; // only codes explicitly printed on the bill -- never inferred (see EXTRACTION_PROMPT)
   line_items: { label: string; amount: number; role: LineRole }[];
 };
 
@@ -41,6 +42,7 @@ export const EXTRACTION_PROMPT = `You are reading a bill or receipt image. Retur
   "billing_period_end": string (YYYY-MM-DD) or null,
   "units_consumed": number or null,
   "units_consumed_unit": string or null,
+  "printed_hsn_codes": array of strings (empty array if none printed),
   "line_items": [ { "label": string, "amount": number, "role": string } ]
 }
 
@@ -162,9 +164,13 @@ Rules:
   whole bill, not a single tariff slab's row. null if nothing like this is
   printed.
 - "total" is the single grand total amount printed on the bill.
+- "printed_hsn_codes": every HSN/SAC code explicitly printed on the bill, labelled "HSN", "HSN/SAC", "HSN Code",
+  or "SAC" (copy the digits exactly as printed, one array entry per code). Empty array if no such code is
+  printed anywhere. Never infer, guess, or derive one from the category or the item description -- if it isn't
+  printed under one of those labels, it doesn't go in this list.
 - "line_items" are the individual lines (label + amount + role) as printed, in the order they appear.
 - Your only job for each line is to transcribe its printed label and amount and classify its role. Do not add up, multiply, net out, or otherwise calculate anything yourself.
-- Do not invent a category, tax rate, or support contact.`;
+- Do not invent a category, tax rate, HSN/SAC code, or support contact.`;
 
 export type ChatTurn = { role: "user" | "assistant"; content: string };
 
@@ -324,6 +330,7 @@ export function coerceExtractedBill(value: unknown): ExtractedBill | null {
     billing_period_end: typeof v.billing_period_end === "string" ? v.billing_period_end : null,
     units_consumed: typeof v.units_consumed === "number" ? v.units_consumed : null,
     units_consumed_unit: typeof v.units_consumed_unit === "string" ? v.units_consumed_unit : null,
+    printed_hsn_codes: Array.isArray(v.printed_hsn_codes) ? v.printed_hsn_codes.filter((c): c is string => typeof c === "string") : [],
     line_items,
   };
 }

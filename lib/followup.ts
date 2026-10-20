@@ -13,6 +13,7 @@ export type FollowupBillContext = {
   verdictGap: number | null;
   disputedLines: { label: string; amount: number }[];
   warnings: string[];
+  printedHsnCodes: string[]; // only codes the bill itself printed -- see lib/gst.ts#findMatchingRate
 };
 
 export type ChatTurn = { role: "user" | "assistant"; content: string };

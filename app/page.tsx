@@ -34,6 +34,7 @@ type ExtractedBill = {
   billing_period_end: string | null;
   units_consumed: number | null;
   units_consumed_unit: string | null;
+  printed_hsn_codes: string[];
   line_items: BillLine[];
 };
 
@@ -497,6 +498,10 @@ export default function UploadPage() {
     units_consumed: number | null;
     units_consumed_unit: string | null;
   }>({ category: null, billing_period_start: null, billing_period_end: null, units_consumed: null, units_consumed_unit: null });
+  // Local-only (never sent to confirm -- bills has no column for this, and
+  // none is needed): feeds the tax-rate comparison (lib/gst.ts) and the
+  // follow-up chat's grounding facts, both client-side for this session.
+  const [printedHsnCodes, setPrintedHsnCodes] = useState<string[]>([]);
   const [billDate, setBillDate] = useState("");
   const [total, setTotal] = useState("");
   const [lines, setLines] = useState<EditableLine[]>([]);
@@ -600,8 +605,8 @@ export default function UploadPage() {
   const parsedTotal = parsedTotalValue ?? 0;
   const livePreview = useMemo(() => computeBillChecks(parsedLines, parsedTotal), [parsedLines, parsedTotal]);
   const taxSummary = useMemo(
-    () => summarizeTaxBreakdown(computeTaxBreakdown(parsedLines, extraFields.category, categoryRates)),
-    [parsedLines, extraFields.category, categoryRates]
+    () => summarizeTaxBreakdown(computeTaxBreakdown(parsedLines, extraFields.category, categoryRates, printedHsnCodes)),
+    [parsedLines, extraFields.category, categoryRates, printedHsnCodes]
   );
 
   // Provider, bill date and printed total are all optional -- missing any
@@ -656,6 +661,7 @@ export default function UploadPage() {
         units_consumed: data.extraction.units_consumed ?? null,
         units_consumed_unit: data.extraction.units_consumed_unit ?? null,
       });
+      setPrintedHsnCodes(data.extraction.printed_hsn_codes ?? []);
       setBillDate(data.extraction.bill_date ?? "");
       setTotal(data.extraction.total !== null ? String(data.extraction.total) : "");
       setLines(
@@ -786,6 +792,7 @@ export default function UploadPage() {
       units_consumed: null,
       units_consumed_unit: null,
     });
+    setPrintedHsnCodes([]);
     setBillDate("");
     setTotal("");
     setLines([]);
@@ -1033,6 +1040,7 @@ export default function UploadPage() {
       verdictGap: facts ? facts.gap : null,
       disputedLines: facts ? facts.disputedLines : [],
       warnings: checks.warnings.map((w) => w.message),
+      printedHsnCodes,
     };
   }
 
@@ -1559,7 +1567,9 @@ export default function UploadPage() {
             </div>
 
             {(() => {
-              const summary = summarizeTaxBreakdown(computeTaxBreakdown(stage.bill.lineItems, extraFields.category, categoryRates));
+              const summary = summarizeTaxBreakdown(
+                computeTaxBreakdown(stage.bill.lineItems, extraFields.category, categoryRates, printedHsnCodes)
+              );
               return summary && <p className="text-sm text-text-muted">{summary}</p>;
             })()}
 

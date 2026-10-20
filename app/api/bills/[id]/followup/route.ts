@@ -119,19 +119,17 @@ export async function POST(request: Request, routeContext: { params: Promise<{ i
     // IGST, foreign VAT, electricity duty, ...) and its effective rate
     // computed in code, compared against any matching seeded reference
     // rate -- never the model's own say-so on what the rate should be.
+    // The comparison itself only ever fires when the bill printed an
+    // HSN/SAC code that matches a seeded hsn_prefix (see
+    // lib/gst.ts#findMatchingRate) -- context.printedHsnCodes is exactly
+    // (and only) those printed codes, carried client-side from extraction.
     const lineItems = context.lineItems.map((li) => ({ label: li.label, amount: li.amount, role: li.role }));
     let gstAddendum = "";
     const hasTaxLines = lineItems.some((li) => li.role === "tax");
     if (hasTaxLines) {
       const { data: rateRows } = await supabase.from("category_rates").select("*").eq("category", bill.category ?? "");
-      // printedHsnCodes: [] until Phase 2 threads the bill's own printed
-      // codes through this payload -- a category match alone (what this
-      // used to do) is exactly the "category guessing" finding this was
-      // tightened against, so an empty list here is the safe default: it
-      // simply means no comparison is made yet, never a false one.
-      const printedHsnCodes: string[] = [];
-      const breakdown = computeTaxBreakdown(lineItems, bill.category, rateRows ?? [], printedHsnCodes);
-      const matchingRate = findMatchingRate(rateRows ?? [], bill.category, printedHsnCodes);
+      const breakdown = computeTaxBreakdown(lineItems, bill.category, rateRows ?? [], context.printedHsnCodes);
+      const matchingRate = findMatchingRate(rateRows ?? [], bill.category, context.printedHsnCodes);
       gstAddendum = buildTaxBreakdownAddendum(breakdown, matchingRate);
     }
 
@@ -290,12 +288,15 @@ function validatePayload(
   }
 
   const warnings = Array.isArray(c.warnings) ? c.warnings.filter((w): w is string => typeof w === "string") : [];
+  const printedHsnCodes = Array.isArray(c.printedHsnCodes)
+    ? c.printedHsnCodes.filter((code): code is string => typeof code === "string")
+    : [];
 
   return {
     ok: true,
     data: {
       question,
-      context: { provider, billDate, total, lineItems, verdictOutcome, verdictGap, disputedLines, warnings },
+      context: { provider, billDate, total, lineItems, verdictOutcome, verdictGap, disputedLines, warnings, printedHsnCodes },
     },
   };
 }
