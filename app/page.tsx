@@ -220,6 +220,11 @@ function PencilButton({ onClick, label }: { onClick: () => void; label: string }
 // and width-capped against the viewport so it can't overflow at mobile
 // widths; every section this is used in keeps the icon well clear of the
 // right edge, so left-anchoring never clips there either.
+//
+// animate-icon-pulse always applies -- its CSS animation-iteration-count
+// is finite (3), so it plays out once per mount and then just stops on its
+// own; no JS timer needed to "turn it off", and prefers-reduced-motion
+// disables it entirely at the CSS level (see globals.css).
 function InfoTooltip({ text }: { text: string }) {
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLSpanElement>(null);
@@ -242,9 +247,12 @@ function InfoTooltip({ text }: { text: string }) {
         onMouseLeave={() => setOpen(false)}
         aria-label="More information"
         aria-expanded={open}
-        className="flex h-5 w-5 items-center justify-center rounded-full border border-border text-[11px] font-bold text-text-muted transition-colors hover:border-accent hover:text-accent"
+        className="animate-icon-pulse flex min-h-8 min-w-8 items-center justify-center gap-1 rounded-full bg-accent-soft px-1.5 text-accent transition-colors hover:bg-accent/15"
       >
-        i
+        <span className="flex h-5 w-5 shrink-0 items-center justify-center text-xs font-bold" aria-hidden>
+          i
+        </span>
+        <span className="hidden text-xs font-medium sm:inline">What&apos;s this?</span>
       </button>
       {open && (
         <span

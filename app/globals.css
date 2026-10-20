@@ -186,14 +186,34 @@ body {
   animation: draw-in 500ms 100ms ease-out forwards;
 }
 
+/* The (i) info-icon's attention-getter on first render -- a soft ring that
+   expands and fades, 3 cycles then stops (iteration-count: 3, not
+   infinite), never resumes on its own after that. */
+@keyframes icon-pulse-ring {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 45%, transparent);
+  }
+  70% {
+    box-shadow: 0 0 0 8px color-mix(in srgb, var(--accent) 0%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 0%, transparent);
+  }
+}
+.animate-icon-pulse {
+  animation: icon-pulse-ring 1.4s ease-out 3;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .animate-fade-up,
   .animate-fade-in,
   .animate-draw-in path,
-  .animate-draw-in circle {
+  .animate-draw-in circle,
+  .animate-icon-pulse {
     animation: none;
     opacity: 1;
     transform: none;
     stroke-dashoffset: 0;
+    box-shadow: none;
   }
 }
