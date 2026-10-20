@@ -55,11 +55,11 @@ export async function POST(request: Request) {
     return json({ success: false, reason: "unauthorized", message: "That bill doesn't belong to you." }, 401);
   }
 
-  // Code, not the prompt -- the sign-off's "[Name]" placeholder is swapped
-  // for the user's own full name (auth metadata, same source as the
-  // header/thank-you toast) here, after the draft already exists, on
+  // Code, not the prompt -- the sign-off's "[Your Name]" placeholder is
+  // swapped for the user's own first name (auth metadata, same source as
+  // the header/thank-you toast) here, after the draft already exists, on
   // every draft including a Regenerate (both hit this same route). Left
-  // as "[Name]" when there's no name to put there.
+  // as "[Your Name]" when there's no name to put there.
   const fullName = typeof user.user_metadata?.full_name === "string" ? user.user_metadata.full_name.trim() : "";
   const draft = applySignature(await draftEmail(facts, tone, tonePreset), fullName || null);
 

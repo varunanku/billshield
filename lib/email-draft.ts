@@ -192,7 +192,7 @@ The tax rate charged on my bill dated ${facts.billDate} works out to ${tf.effect
 Could you please confirm the tax classification applied to this charge, and refund the excess of Rs ${Math.abs(facts.gap).toFixed(2)} if it was applied in error? I'd appreciate a reference number for this query.
 
 Regards,
-[Name]`,
+[Your Name]`,
     };
   }
 
@@ -213,7 +213,7 @@ My bill dated ${facts.billDate} shows a total of Rs ${facts.total.toFixed(2)}. T
 Could you please review this and ${overpaid ? "arrange a refund or an adjustment against my next bill" : "correct the charge"}? I'd appreciate a reference number for this query.
 
 Regards,
-[Name]`,
+[Your Name]`,
     };
   }
 
@@ -225,7 +225,7 @@ Regards,
 I'd like to understand a small difference of Rs ${Math.abs(facts.gap).toFixed(2)} on my bill dated ${facts.billDate}. The amounts I can check come to Rs ${facts.billedAmount.toFixed(2)}, against a printed total of Rs ${facts.total.toFixed(2)}. Could you help clarify where this difference comes from?
 
 Thank you,
-[Name]`,
+[Your Name]`,
     };
   }
 
@@ -240,7 +240,7 @@ I have a question about my bill dated ${facts.billDate} (total Rs ${facts.total.
     }${facts.promisedAmount !== null ? ` I was told to expect around Rs ${facts.promisedAmount.toFixed(2)}.` : ""}
 
 Thank you,
-[Name]`,
+[Your Name]`,
   };
 }
 
@@ -259,17 +259,22 @@ export async function draftEmail(facts: Facts, tone: Tone, preset: TonePreset | 
   return draft;
 }
 
-// The sign-off's "[Name]" placeholder (see templateEmail above -- the one
-// identity detail every draft, model-written or fallback, is expected to
-// carry) is swapped for the user's own full name in code, after the draft
-// already exists -- never asked of the LLM itself, so there's nothing here
-// for the number/content guard above to even reason about. The caller
-// (app/api/bills/draft-email/route.ts) applies this on every draft,
-// including a Regenerate, since both paths produce an EmailDraft the same
-// way. Keeps "[Name]" unchanged when there's no name to put there.
-const NAME_PLACEHOLDER = /\[Name\]/g;
+// The sign-off's "[Your Name]" placeholder (see templateEmail above -- the
+// one identity detail every draft, model-written or fallback, is expected
+// to carry) is swapped for the user's own first name in code, after the
+// draft already exists -- never asked of the LLM itself, so there's
+// nothing here for the number/content guard above to even reason about.
+// Case-insensitive and whitespace-flexible: an AI-written draft doesn't
+// reliably reproduce the fallback's exact casing/spacing (seen in the
+// wild as "[your name]", "[ Your  Name ]", etc.), so this matches any of
+// those rather than the one literal string templateEmail happens to use.
+// The caller (app/api/bills/draft-email/route.ts) applies this on every
+// draft, including a Regenerate, since both paths produce an EmailDraft
+// the same way. Keeps the placeholder unchanged when there's no name.
+const NAME_PLACEHOLDER = /\[\s*your\s+name\s*\]/gi;
 
 export function applySignature(draft: EmailDraft, fullName: string | null): EmailDraft {
-  if (!fullName) return draft;
-  return { ...draft, body: draft.body.replace(NAME_PLACEHOLDER, fullName) };
+  const firstName = fullName?.trim().split(/\s+/)[0];
+  if (!firstName) return draft;
+  return { ...draft, body: draft.body.replace(NAME_PLACEHOLDER, firstName) };
 }
