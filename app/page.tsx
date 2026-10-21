@@ -29,7 +29,14 @@ import { computeTaxBreakdown, summarizeTaxBreakdown, computeEffectiveTaxRates, t
 import { ThemeSwitcher } from "@/app/theme-switcher";
 import { buildThankYouMessage, UNKNOWN_PROVIDER } from "@/lib/thank-you";
 import { buildSuggestionChips } from "@/lib/chat-chips";
-import { prepareUploadFile, isNetworkError } from "@/lib/upload-image";
+import {
+  prepareUploadFile,
+  readIntoMemory,
+  classifyUploadError,
+  FILE_UNREADABLE_MESSAGE,
+  FILE_TOO_LARGE_MESSAGE,
+  UPLOAD_NETWORK_MESSAGE,
+} from "@/lib/upload-image";
 
 type ExtractedBill = {
   provider: string | null;
@@ -626,7 +633,7 @@ export default function UploadPage() {
     lines.length > 0 &&
     lines.every((l) => l.label.trim().length > 0 && parseAmountInput(l.amount) !== null);
 
-  function handleFileSelected(selected: File | null) {
+  async function handleFileSelected(selected: File | null) {
     if (selected && isHeicFile(selected)) {
       setFile(null);
       setStage({
@@ -635,7 +642,22 @@ export default function UploadPage() {
       });
       return;
     }
-    setFile(selected);
+    if (!selected) {
+      setFile(null);
+      return;
+    }
+    // Read it into memory now, while the handle is valid: a photo picked
+    // from Google Photos on Android is a cloud-backed handle that can fail
+    // to read later (NotReadableError/NotFoundError). Upload stays disabled
+    // (file is null) until this copy exists; the original is never used again.
+    setFile(null);
+    try {
+      setFile(await readIntoMemory(selected));
+    } catch (err) {
+      if (classifyUploadError("read", err) === "unreadable") {
+        setStage({ name: "error", message: FILE_UNREADABLE_MESSAGE });
+      }
+    }
   }
 
   // Shared by the first upload and a rate-limited "Try again" (which reuses
@@ -703,7 +725,12 @@ export default function UploadPage() {
     // go straight from the browser to storage, not through our API). If the
     // user abandons the flow before confirming, this file is now orphaned
     // (no bill row ever points at it). Add a cleanup job if that piles up.
-    const toUpload = await prepareUploadFile(file);
+    const prepared = await prepareUploadFile(file);
+    if (!prepared) {
+      setStage({ name: "error", message: FILE_TOO_LARGE_MESSAGE });
+      return;
+    }
+    const toUpload = prepared;
     // A fresh path per attempt, so a retry never hits "already exists" if
     // the first attempt reached storage but the response was lost.
     async function attemptUpload(): Promise<{ path: string; error: unknown }> {
@@ -719,7 +746,7 @@ export default function UploadPage() {
     }
 
     let { path, error: uploadError } = await attemptUpload();
-    if (uploadError && isNetworkError(uploadError)) {
+    if (uploadError && classifyUploadError("upload", uploadError) === "network") {
       await new Promise((r) => setTimeout(r, 1500));
       ({ path, error: uploadError } = await attemptUpload());
     }
@@ -727,9 +754,10 @@ export default function UploadPage() {
     if (uploadError) {
       setStage({
         name: "error",
-        message: isNetworkError(uploadError)
-          ? "Upload failed — your connection may have dropped. Try again, or upload a screenshot of the bill instead."
-          : `Couldn't upload your file: ${(uploadError as { message?: string }).message ?? "unknown error"}`,
+        message:
+          classifyUploadError("upload", uploadError) === "network"
+            ? UPLOAD_NETWORK_MESSAGE
+            : `Couldn't upload your file: ${(uploadError as { message?: string }).message ?? "unknown error"}`,
         uploadFailed: true,
       });
       return;
