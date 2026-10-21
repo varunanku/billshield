@@ -15,6 +15,10 @@ export type FollowupBillContext = {
   warnings: string[];
   printedHsnCodes: string[]; // only codes the bill itself printed -- see lib/gst.ts#findMatchingRate
   taxTotal: number; // sum of tax-role lines, computed in code (app/page.tsx#buildFollowupContext)
+  // Set only when the verdict's gap is printed total minus the amount the
+  // user expected (lib/verdict.ts, reason "promise_mismatch") -- verdictGap
+  // is then that gap, not an arithmetic/payment one.
+  expectedAmount?: { promisedAmount: number; matchedLineLabel: string | null } | null;
 };
 
 export type ChatTurn = { role: "user" | "assistant"; content: string };
@@ -55,6 +59,12 @@ export function buildFollowupSystemPrompt(context: FollowupBillContext): string 
   const gapDescription =
     context.verdictGap === null
       ? "none"
+      : context.expectedAmount
+        ? `Rs ${Math.abs(context.verdictGap).toFixed(2)} -- the printed total is this much ${context.verdictGap >= 0 ? "higher" : "lower"} than the Rs ${context.expectedAmount.promisedAmount.toFixed(2)} the user expected to pay. This is NOT a confirmed billing error -- describe it as "${context.verdictGap >= 0 ? "higher" : "lower"} than the amount you expected", never as an error or overcharge.${
+            context.expectedAmount.matchedLineLabel
+              ? ` It matches the "${context.expectedAmount.matchedLineLabel}" line on the bill -- name that line when asked what explains the difference.`
+              : ""
+          }`
       : context.verdictGap < 0
         ? `Rs ${Math.abs(context.verdictGap).toFixed(2)} -- the user OVERPAID by this amount. Always describe this as "overpaid by Rs ${Math.abs(context.verdictGap).toFixed(2)}", never state a negative number.`
         : `Rs ${context.verdictGap.toFixed(2)} owed/undercharged by this amount.`;

@@ -15,7 +15,7 @@ import {
   type Checkpoint,
   type BillCategory,
 } from "@/lib/bill-checks";
-import { shouldDraftEmail, type Verdict } from "@/lib/verdict";
+import { shouldDraftEmail, expectedAmountHeadline, type Verdict } from "@/lib/verdict";
 import {
   MAX_FOLLOWUP_MESSAGES,
   disputedLinesForChat,
@@ -1089,6 +1089,10 @@ export default function UploadPage() {
       warnings: checks.warnings.map((w) => w.message),
       printedHsnCodes,
       taxTotal,
+      expectedAmount:
+        facts?.expectedAmountGap && facts.promisedAmount !== null
+          ? { promisedAmount: facts.promisedAmount, matchedLineLabel: facts.expectedAmountGap.matchedLineLabel }
+          : null,
     };
   }
 
@@ -1538,17 +1542,29 @@ export default function UploadPage() {
               </div>
             </div>
           )}
-          {stage.verdict.outcome === "confirmed_error" && (
+          {/* A gap against what the user expected is a question, not a
+              proven error -- warning styling and "higher than expected"
+              wording, never "charged more than promised". */}
+          {stage.verdict.outcome === "confirmed_error" && stage.verdict.reason === "promise_mismatch" && (
+            <div className="flex items-start gap-3 rounded-lg border-l-4 border-warning bg-warning-soft p-5 text-warning animate-fade-up">
+              <AlertTriangleIcon className="mt-1 h-7 w-7 shrink-0" />
+              <div>
+                <p className="text-[28px] font-bold leading-tight">
+                  {expectedAmountHeadline(stage.verdict.facts)}
+                </p>
+                <p className="mt-1 text-sm text-text-muted">
+                  This doesn&apos;t mean the bill is wrong. The email below asks your provider to explain the difference.
+                </p>
+              </div>
+            </div>
+          )}
+          {stage.verdict.outcome === "confirmed_error" && stage.verdict.reason !== "promise_mismatch" && (
             <div className="flex items-start gap-3 rounded-lg border-l-4 border-danger bg-danger-soft p-5 text-danger animate-fade-up">
               <XCircleIcon className="mt-1 h-7 w-7 shrink-0" />
               <div>
                 <p className="text-[28px] font-bold leading-tight">
                   {stage.verdict.reason === "overpaid"
                     ? `You overpaid Rs ${money(Math.abs(stage.verdict.facts.gap))}.`
-                    : stage.verdict.reason === "promise_mismatch"
-                    ? stage.verdict.facts.gap >= 0
-                      ? `You were charged Rs ${money(Math.abs(stage.verdict.facts.gap))} more than you were promised.`
-                      : `You were promised Rs ${money(Math.abs(stage.verdict.facts.gap))} more than you were charged.`
                     : stage.verdict.reason === "tax_overcharge" && stage.verdict.facts.taxFinding
                     ? `The tax rate on this bill (${stage.verdict.facts.taxFinding.effectiveRatePercent.toFixed(2)}%) is higher than the rate listed for HSN ${
                         stage.verdict.facts.taxFinding.hsnPrefix ?? "?"
@@ -1637,7 +1653,7 @@ export default function UploadPage() {
 
           {verdictDraftsEmail(stage.verdict) && (
             <div className={card}>
-              <p className="mb-2 font-bold">{stage.verdict.outcome === "confirmed_error" ? "Dispute email" : "Inquiry email"}</p>
+              <p className="mb-2 font-bold">{stage.verdict.outcome === "confirmed_error" && stage.verdict.tone === "confident" ? "Dispute email" : "Inquiry email"}</p>
               {draftingEmail && <p className="text-text-muted">Drafting...</p>}
               {emailError && <p className="text-danger">{emailError}</p>}
               {emailDraft && (

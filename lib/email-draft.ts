@@ -96,6 +96,17 @@ function passesNumberGuard(draft: EmailDraft, facts: Facts): boolean {
   return allNumbersAreFacts(draft, facts) && totalClaimsAreCorrect(draft, facts) && differenceClaimsAreCorrect(draft, facts);
 }
 
+// An expected-amount gap (lib/verdict.ts, reason "promise_mismatch") is a
+// question for the provider, never an accusation: any draft that calls it
+// an error or asks for a correction/revised bill/refund is rejected the
+// same way a number-guard failure is (one regeneration, then the template).
+const ACCUSATORY_WORDING = /\berror\b|\berroneous|\bincorrect|\bwrong\b|\bcorrect (this|the|it)\b|\bcorrection\b|\brevised bill\b|\brefund\b|\bovercharg/i;
+
+export function passesWordingGuard(draft: EmailDraft, facts: Facts): boolean {
+  if (!facts.expectedAmountGap) return true;
+  return !ACCUSATORY_WORDING.test(`${draft.subject} ${draft.body}`);
+}
+
 // True for cannot_verify's email specifically: an inquiry-tone draft with a
 // real (non-zero) gap but no pinpointed line -- distinct from unexplained's
 // inquiry draft, which always has either a disputed line or a zero gap
@@ -120,16 +131,24 @@ export function buildPrompt(facts: Facts, tone: Tone, preset: TonePreset | null)
 Provider: ${facts.provider}
 Bill date: ${facts.billDate}
 Printed total: Rs ${facts.total.toFixed(2)}
-Billed amount (as reconciled by the user): Rs ${facts.billedAmount.toFixed(2)}
-${facts.promisedAmount !== null ? `Promised amount: Rs ${facts.promisedAmount.toFixed(2)}\n` : ""}Disputed line(s):
+${facts.expectedAmountGap ? "" : `Billed amount (as reconciled by the user): Rs ${facts.billedAmount.toFixed(2)}\n`}${facts.promisedAmount !== null ? `Promised amount: Rs ${facts.promisedAmount.toFixed(2)}\n` : ""}Disputed line(s):
 ${lineText}
-Difference: Rs ${Math.abs(facts.gap).toFixed(2)} (${facts.gap >= 0 ? "the user appears to have been undercharged or owes more" : "the user appears to have overpaid"})
-${facts.reconcilingBalanceLabel ? `Note: a line labelled "${facts.reconcilingBalanceLabel}" on the bill matches this difference exactly -- mention it as confirming the excess.\n` : ""}${
+${
+    facts.expectedAmountGap
+      ? `Difference: Rs ${Math.abs(facts.gap).toFixed(2)} -- the printed total is this much ${facts.gap >= 0 ? "higher" : "lower"} than the amount the user expected to pay. This is NOT a confirmed error.\n${
+          facts.expectedAmountGap.matchedLineLabel
+            ? `The line labelled "${facts.expectedAmountGap.matchedLineLabel}" on the bill matches this difference -- name that line and ask whether it applies, but do not state its amount.\n`
+            : ""
+        }`
+      : `Difference: Rs ${Math.abs(facts.gap).toFixed(2)} (${facts.gap >= 0 ? "the user appears to have been undercharged or owes more" : "the user appears to have overpaid"})\n`
+  }${facts.reconcilingBalanceLabel ? `Note: a line labelled "${facts.reconcilingBalanceLabel}" on the bill matches this difference exactly -- mention it as confirming the excess.\n` : ""}${
     facts.taxFinding
       ? `Tax finding (CONFIRMED): the computed tax rate on this bill is ${facts.taxFinding.effectiveRatePercent.toFixed(2)}%, higher than the reference rate of ${facts.taxFinding.expectedRatePercent}%${facts.taxFinding.hsnPrefix ? ` for HSN ${facts.taxFinding.hsnPrefix}` : ""}${facts.taxFinding.sourceUrl ? ` (source: ${facts.taxFinding.sourceUrl})` : ""}. The difference above (Rs ${Math.abs(facts.gap).toFixed(2)}) is the possible excess this higher rate would add. This is a confirmed computed finding, but never state as fact that the provider made an error -- only that the rate should be confirmed.\n`
       : ""
   }Tone: ${
-    tone === "confident"
+    facts.expectedAmountGap
+      ? `Soft and inquiry-based. Say the bill's printed total is ${facts.gap >= 0 ? "higher" : "lower"} than the amount the user expected, and ask the provider to explain what makes up the difference. Never call it an error, never say anything is wrong or incorrect, and never ask for a correction, a revised bill or a refund.`
+      : tone === "confident"
       ? facts.taxFinding
         ? `Confident and direct, but not accusatory about intent. State that the tax rate charged is higher than the reference rate for this item's HSN classification, ask the provider to confirm the tax classification applied, and ask them to refund the excess if the rate was applied in error. Do not state as fact that the provider is wrong -- frame it as something to confirm.`
         : `Confident and direct. State the issue plainly.${
@@ -180,6 +199,23 @@ export function templateEmail(facts: Facts, tone: Tone): EmailDraft {
     facts.disputedLines.length > 0
       ? facts.disputedLines.map((l) => `${l.label} (Rs ${l.amount.toFixed(2)})`).join(", ")
       : "the charge in question";
+
+  if (facts.expectedAmountGap && facts.promisedAmount !== null) {
+    const matched = facts.expectedAmountGap.matchedLineLabel;
+    return {
+      subject: `Question about the amount on my ${facts.billDate} bill`,
+      body: `Dear ${facts.provider} Support,
+
+My bill dated ${facts.billDate} shows a total of Rs ${facts.total.toFixed(2)}. I was expecting to pay Rs ${facts.promisedAmount.toFixed(2)}, so the bill is Rs ${Math.abs(facts.gap).toFixed(2)} ${facts.gap >= 0 ? "higher" : "lower"} than I expected.${
+        matched ? ` I can see a "${matched}" line on the bill that seems to account for this.` : ""
+      }
+
+Could you please help me understand what makes up this amount${matched ? ` and whether the ${matched} applies to my account` : ""}? I'd appreciate a reference number for this query.
+
+Thank you,
+[Your Name]`,
+    };
+  }
 
   if (tone === "confident" && facts.taxFinding) {
     const tf = facts.taxFinding;
@@ -249,11 +285,12 @@ Thank you,
 // The template fallback ignores preset: it's a fixed-wording, code-only
 // safety net for when the model fails the guard twice, not styled output.
 export async function draftEmail(facts: Facts, tone: Tone, preset: TonePreset | null = null): Promise<EmailDraft> {
+  const passes = (d: EmailDraft) => passesNumberGuard(d, facts) && passesWordingGuard(d, facts);
   let draft = await callModel(facts, tone, preset);
-  if (draft && !passesNumberGuard(draft, facts)) {
+  if (draft && !passes(draft)) {
     draft = await callModel(facts, tone, preset); // one regeneration attempt
   }
-  if (!draft || !passesNumberGuard(draft, facts)) {
+  if (!draft || !passes(draft)) {
     return templateEmail(facts, tone);
   }
   return draft;

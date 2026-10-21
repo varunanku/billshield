@@ -277,11 +277,22 @@ function validatePayload(
     : [];
   const taxTotal = typeof c.taxTotal === "number" && Number.isFinite(c.taxTotal) ? c.taxTotal : 0;
 
+  let expectedAmount: FollowupBillContext["expectedAmount"] = null;
+  if (typeof c.expectedAmount === "object" && c.expectedAmount !== null) {
+    const ea = c.expectedAmount as Record<string, unknown>;
+    if (typeof ea.promisedAmount === "number" && Number.isFinite(ea.promisedAmount)) {
+      expectedAmount = {
+        promisedAmount: ea.promisedAmount,
+        matchedLineLabel: typeof ea.matchedLineLabel === "string" ? ea.matchedLineLabel : null,
+      };
+    }
+  }
+
   return {
     ok: true,
     data: {
       question,
-      context: { provider, billDate, total, lineItems, verdictOutcome, verdictGap, disputedLines, warnings, printedHsnCodes, taxTotal },
+      context: { provider, billDate, total, lineItems, verdictOutcome, verdictGap, disputedLines, warnings, printedHsnCodes, taxTotal, expectedAmount },
     },
   };
 }

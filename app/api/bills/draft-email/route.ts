@@ -41,8 +41,10 @@ export async function POST(request: Request) {
   const { billId, outcome, facts, tonePreset } = validated.data;
   // confirmed_error is the only confident-tone outcome -- cannot_verify and
   // unexplained both draft a soft inquiry (the wording differs between
-  // them inside draftEmail, keyed off facts, not off outcome).
-  const tone: Tone = outcome === "confirmed_error" ? "confident" : "inquiry";
+  // them inside draftEmail, keyed off facts, not off outcome). A gap
+  // against the user's expected amount (facts.expectedAmountGap) is
+  // confirmed_error but always inquiry tone -- never worded as an error.
+  const tone: Tone = outcome === "confirmed_error" && !facts.expectedAmountGap ? "confident" : "inquiry";
   const isDefaultTone = tonePreset === null;
 
   // RLS-scoped: this also confirms the bill belongs to the signed-in user.
@@ -191,6 +193,13 @@ function validatePayload(
     }
   }
 
+  // Set only for reason "promise_mismatch" (lib/verdict.ts).
+  let expectedAmountGap: Facts["expectedAmountGap"] = null;
+  if (typeof f.expectedAmountGap === "object" && f.expectedAmountGap !== null) {
+    const eg = f.expectedAmountGap as Record<string, unknown>;
+    expectedAmountGap = { matchedLineLabel: typeof eg.matchedLineLabel === "string" ? eg.matchedLineLabel : null };
+  }
+
   return {
     ok: true,
     data: {
@@ -207,6 +216,7 @@ function validatePayload(
         total,
         reconcilingBalanceLabel,
         taxFinding,
+        expectedAmountGap,
       },
       tonePreset,
     },

@@ -4,9 +4,12 @@
 //
 // 1. CONFIRMED ERROR (confident tone, drafts an email): hard evidence --
 //    a payment that doesn't match billed (charge+tax-discount only, never
-//    crediting an outstanding/arrears line in), a checkpoint gap with a
-//    single suggested culprit line, or a promise WITH a given amount that
-//    the billed total doesn't match. Always wins over a softer signal.
+//    crediting an outstanding/arrears line in), or a checkpoint gap with a
+//    single suggested culprit line. Always wins over a softer signal.
+//    A promise WITH a given amount that the printed total doesn't match
+//    also lands here (reason "promise_mismatch"), but with INQUIRY tone:
+//    a gap against what the user expected is not proof the bill is wrong,
+//    so it's never worded as an error (see expectedAmountGap below).
 // 2. CANNOT VERIFY (inquiry tone, drafts a soft email): an unpinpointed gap
 //    exists -- a checkpoint gap with no single suggestion, a statement
 //    that doesn't reconcile, or the general arithmetic check with nothing
@@ -60,11 +63,17 @@ export type Facts = {
     hsnPrefix: string | null;
     sourceUrl: string | null;
   } | null;
+  // Set ONLY for reason "promise_mismatch": gap is printed total minus the
+  // promised amount. matchedLineLabel names the one bill line (if exactly
+  // one) whose amount is within PROMISE_LINE_MATCH_TOLERANCE of that gap,
+  // e.g. a late payment surcharge. Label only -- its amount is already on
+  // the bill, and the email never needs to state it.
+  expectedAmountGap: { matchedLineLabel: string | null } | null;
 };
 
 export type Verdict =
   | { outcome: "clean"; reconciledTotal: number; roundingNote: RoundedTotalNote | null }
-  | { outcome: "confirmed_error"; tone: "confident"; reason: ConfirmedErrorReason; facts: Facts }
+  | { outcome: "confirmed_error"; tone: "confident" | "inquiry"; reason: ConfirmedErrorReason; facts: Facts }
   | { outcome: "cannot_verify"; tone: "inquiry"; facts: Facts }
   | { outcome: "unexplained"; tone: "inquiry"; facts: Facts };
 
@@ -86,6 +95,32 @@ export function disputedAmountFor(facts: Facts): number | null {
 export function shouldDraftEmail(facts: Facts): boolean {
   const amount = disputedAmountFor(facts);
   return amount === null || amount >= 1.0;
+}
+
+// "Matches the Late Payment Surcharge line" -- within Rs 2 of the gap, so a
+// bill rounded to the nearest rupee (48.44 on a 48.00 gap) still matches.
+export const PROMISE_LINE_MATCH_TOLERANCE = 2.0;
+
+// The one charge/tax/balance line whose amount explains a positive
+// expected-amount gap, or null when none or more than one does.
+export function findLineMatchingGap(lines: BillLine[], gap: number): string | null {
+  if (gap <= EPSILON) return null;
+  const matches = lines.filter(
+    (l) =>
+      (l.role === "charge" || l.role === "tax" || l.role === "balance") &&
+      Math.abs(l.amount - gap) <= PROMISE_LINE_MATCH_TOLERANCE
+  );
+  return matches.length === 1 ? matches[0].label : null;
+}
+
+// The verdict-screen headline for reason "promise_mismatch". Never "charged
+// more than promised" -- a gap against an expectation isn't a proven error.
+export function expectedAmountHeadline(facts: Facts): string {
+  const direction = facts.gap >= 0 ? "higher" : "lower";
+  const matched = facts.expectedAmountGap?.matchedLineLabel;
+  return `This bill is Rs ${Math.abs(facts.gap).toFixed(2)} ${direction} than the amount you expected${
+    matched ? ` -- it matches the ${matched} line.` : "."
+  }`;
 }
 
 export function decideVerdict(input: {
@@ -114,6 +149,7 @@ export function decideVerdict(input: {
     total: checks.effectiveTotal,
     reconcilingBalanceLabel,
     taxFinding: null,
+    expectedAmountGap: null,
   });
 
   // Hard evidence: we know exactly what was billed and exactly what was
@@ -144,9 +180,23 @@ export function decideVerdict(input: {
     return { outcome: "cannot_verify", tone: "inquiry", facts: baseFacts(brokenCheckpoint.gap, []) };
   }
 
-  const promiseGap = promise?.promisedAmount != null ? checks.billedSum - promise.promisedAmount : null;
+  // Against the printed total (facts.total), not the reconciled billed
+  // sum, so the headline, email and chat all quote the same figure the
+  // user sees on their bill. Falls back to billedSum only when no total
+  // was entered at all.
+  const printedTotal = Math.abs(checks.effectiveTotal) > EPSILON ? checks.effectiveTotal : checks.billedSum;
+  const promiseGap = promise?.promisedAmount != null ? printedTotal - promise.promisedAmount : null;
   if (promiseGap !== null && Math.abs(promiseGap) > EPSILON) {
-    return { outcome: "confirmed_error", tone: "confident", reason: "promise_mismatch", facts: baseFacts(promiseGap, []) };
+    return {
+      outcome: "confirmed_error",
+      tone: "inquiry",
+      reason: "promise_mismatch",
+      facts: {
+        ...baseFacts(promiseGap, []),
+        total: printedTotal,
+        expectedAmountGap: { matchedLineLabel: findLineMatchingGap(lines, promiseGap) },
+      },
+    };
   }
 
   if (checks.statement && checks.statement.issue) {
