@@ -22,6 +22,8 @@ Built solo by [Varun Sharma](https://github.com/varunanku) for the 100x Engineer
    - **Confirmed error:** a specific line doesn't add up. A dispute email is drafted.
    - **Cannot verify:** the bill couldn't be read fully. The app says so plainly.
    - **Unexplained line:** a charge the app can't account for. The email asks the provider to explain it.
+
+   If the bill's printed total differs from the amount you said you expected, that is never called an error. The headline reads "This bill is Rs X higher than the amount you expected", it names any single line within Rs 2 of the gap (for example a late payment surcharge), and the email asks the provider to explain the difference.
 6. **Dispute email** written only from numbers the code has verified. It has 6 tone presets, can be regenerated, and offers Copy, Open in email app, and "I've sent it" tracking. If the user overpaid, it drafts a refund request instead.
 7. **Follow-up chat** answers questions from the bill's computed facts. It can explain a line, check a tax rate, or compare with earlier bills from the same provider.
 
@@ -29,7 +31,7 @@ Built solo by [Varun Sharma](https://github.com/varunanku) for the 100x Engineer
 
 - **API keys never reach the browser.** The LLM key and Supabase service-role key are used only in server routes. No secret ever gets a `NEXT_PUBLIC_` prefix.
 - **Every number comes from code, never from AI.** The LLM reads text off the bill, sorts it into a fixed list of categories, and writes the wording. Code does every total, tax, difference, month-over-month change and verdict. A guard rejects any drafted email that contains a number the code didn't supply.
-- **Row-level security on every table.** A user can only read and write their own rows. This is proven by a 41-check two-user test covering all 7 tables, storage, and blocked writes.
+- **Row-level security on every table.** A user can only read and write their own rows. This is proven by a 48-check two-user test covering all 8 tables, storage, and blocked writes.
 - **Honest boundaries.** The app can't confirm legal or policy correctness, so it says so instead of guessing. GST findings are stated with confidence because they come from a hard-coded table. Notes about handling charges and similar fees are informational only.
 
 ## Features
@@ -43,6 +45,8 @@ Built solo by [Varun Sharma](https://github.com/varunanku) for the 100x Engineer
 - **Editable review screen.** Fields are read-only until you tap the pencil to edit one. Checkpoint suggestions (for example, "remove this line") fix common misreads in one click.
 - **Follow-up chat with suggestion chips.** Code picks the chips from what the bill actually contains. Each bill allows up to 10 questions.
 - **6 tone presets** for the email: Polite, Firm, Formal, Brief, Friendly and Escalation. Which preset you use is tracked so tone usage can be reported.
+- **Reliable photo uploads.** Photos over 1.5 MB or 2000 px are resized in the browser to a 2000 px JPEG before upload (PDFs are left alone). A dropped connection is retried once, then the app suggests a screenshot instead.
+- **Send funnel.** Copy, Open in email app and "I've sent it" are each logged, along with how much of the first draft the user kept (word-level similarity, computed in code). `scripts/tone-stats.mjs` reports the funnel.
 
 ## Tech stack
 
@@ -56,7 +60,7 @@ Built solo by [Varun Sharma](https://github.com/varunanku) for the 100x Engineer
 
 ## Database schema
 
-There are 7 Postgres tables, all with RLS. Full column details are in [`docs/schema.md`](docs/schema.md).
+There are 8 Postgres tables, all with RLS. Full column details are in [`docs/schema.md`](docs/schema.md).
 
 | Table | Purpose |
 |-------|---------|
@@ -64,9 +68,10 @@ There are 7 Postgres tables, all with RLS. Full column details are in [`docs/sch
 | `bills` | One row per upload: provider, date, total, category, billing period, verdict |
 | `line_items` | Individual lines on the bill, each with a role (charge/tax/discount/payment/balance/subtotal/info). Includes "Amount Paid" for billed-vs-paid differences. |
 | `promises` | What the user was told or expected to pay |
-| `messages` | Drafted emails and chat turns: `tone_preset_used`, `final_body`, `action_taken`, and a link to the disputed `line_items` row (the proof link) |
+| `messages` | Drafted emails and chat turns: `tone_preset_used`, `final_body`, `action_taken`, `draft_kept_pct`, and a link to the disputed `line_items` row (the proof link) |
 | `category_rates` | GST reference rates from CBIC (39 rows): `rate_percent`, `rate_type`, `source_note`, `last_verified` |
 | `bill_metrics` | Units consumed and meter readings, used for month-over-month comparison |
+| `message_events` | One row per Copy / Open in email app / I've sent it tap, with `draft_kept_pct` at that moment. Append-only (no update or delete). |
 
 The difference is always computed in code as `amount_billed - amount_paid`. A positive value means a dispute to the provider. A negative value means the user overpaid, so the app drafts a refund request.
 
@@ -90,7 +95,7 @@ npm install
 #    OPENROUTER_MODEL=               optional
 cp .env.example .env.local
 
-# 4. Run migrations 0001 through 0009 in order in the Supabase SQL editor.
+# 4. Run migrations 0001 through 0011 in order in the Supabase SQL editor.
 #    They live in supabase/migrations/ and are safe to run more than once.
 #    Then seed the GST table:
 node --env-file=.env.local scripts/seed-category-rates.mjs
@@ -110,7 +115,7 @@ npm test
 # RLS proof: creates two users and checks that neither can read or write
 # the other's rows or files (needs the service-role key in .env.local)
 node --env-file=.env.local scripts/rls-two-user-test.mjs
-# Expected: 41/41 checks passed
+# Expected: 48/48 checks passed
 ```
 
 The golden pairs used for regression testing are an Airtel Wi-Fi bill and a Tata Power electricity bill.
@@ -130,7 +135,7 @@ The golden pairs used for regression testing are an Airtel Wi-Fi bill and a Tata
 │       ├── bills/draft-email/    # Email wording with tone presets
 │       ├── bills/[id]/followup/  # Follow-up chat grounded in the facts
 │       ├── bills/[id]/apply-correction/
-│       └── messages/[id]/        # Record "sent" / "not sending"
+│       └── messages/[id]/        # Record "sent" / "not sending"; events/ logs funnel taps
 ├── lib/
 │   ├── bill-checks.ts            # Arithmetic checks, checkpoints, line roles
 │   ├── verdict.ts                # The four-outcome verdict
@@ -144,15 +149,18 @@ The golden pairs used for regression testing are an Airtel Wi-Fi bill and a Tata
 │   ├── groq.ts, openrouter.ts, provider.ts   # LLM providers (server only)
 │   ├── pdf-to-images.ts          # mupdf PDF rendering
 │   ├── storage-paths.ts          # Anchored path validation
+│   ├── upload-image.ts           # In-browser photo resize + network-error check
+│   ├── draft-kept.ts             # How much of the first draft was kept
+│   ├── tone-stats.ts             # Tone usage and send-funnel aggregation
 │   ├── supabase/                 # Browser, server and admin clients
 │   └── *.test.mjs                # Unit tests
 ├── data/category-rates.csv       # 39 CBIC-sourced GST rates
 ├── scripts/
-│   ├── rls-two-user-test.mjs     # 41-check RLS proof
+│   ├── rls-two-user-test.mjs     # 48-check RLS proof
 │   ├── seed-category-rates.mjs   # Load the GST table
 │   ├── extract-regression.mjs    # Extraction regression on sample bills
-│   └── tone-stats.mjs            # Tone usage report
-├── supabase/migrations/          # 0001–0009
+│   └── tone-stats.mjs            # Tone usage and send-funnel report
+├── supabase/migrations/          # 0001–0011
 ├── docs/schema.md
 └── CLAUDE.md                     # Build rules for AI-assisted development
 ```
