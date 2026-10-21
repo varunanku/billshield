@@ -29,6 +29,7 @@ import { computeTaxBreakdown, summarizeTaxBreakdown, computeEffectiveTaxRates, t
 import { ThemeSwitcher } from "@/app/theme-switcher";
 import { buildThankYouMessage, UNKNOWN_PROVIDER } from "@/lib/thank-you";
 import { buildSuggestionChips } from "@/lib/chat-chips";
+import { prepareUploadFile, isNetworkError } from "@/lib/upload-image";
 
 type ExtractedBill = {
   provider: string | null;
@@ -97,7 +98,7 @@ type Stage =
   | { name: "extracting" }
   | { name: "reviewing"; notice: string | null }
   | { name: "done"; bill: ConfirmedBill; checks: BillChecks; verdict: Verdict }
-  | { name: "error"; message: string; notice?: string; retryAfterSeconds?: number };
+  | { name: "error"; message: string; notice?: string; retryAfterSeconds?: number; uploadFailed?: boolean };
 
 function extensionFor(file: File): string {
   if (file.type === "application/pdf") return "pdf";
@@ -702,13 +703,35 @@ export default function UploadPage() {
     // go straight from the browser to storage, not through our API). If the
     // user abandons the flow before confirming, this file is now orphaned
     // (no bill row ever points at it). Add a cleanup job if that piles up.
-    const path = `${user.id}/${crypto.randomUUID()}.${extensionFor(file)}`;
-    const { error: uploadError } = await supabase.storage
-      .from("bills")
-      .upload(path, file, { contentType: file.type || "application/octet-stream", upsert: false });
+    const toUpload = await prepareUploadFile(file);
+    // A fresh path per attempt, so a retry never hits "already exists" if
+    // the first attempt reached storage but the response was lost.
+    async function attemptUpload(): Promise<{ path: string; error: unknown }> {
+      const path = `${user!.id}/${crypto.randomUUID()}.${extensionFor(toUpload)}`;
+      try {
+        const { error } = await supabase.storage
+          .from("bills")
+          .upload(path, toUpload, { contentType: toUpload.type || "application/octet-stream", upsert: false });
+        return { path, error };
+      } catch (err) {
+        return { path, error: err };
+      }
+    }
+
+    let { path, error: uploadError } = await attemptUpload();
+    if (uploadError && isNetworkError(uploadError)) {
+      await new Promise((r) => setTimeout(r, 1500));
+      ({ path, error: uploadError } = await attemptUpload());
+    }
 
     if (uploadError) {
-      setStage({ name: "error", message: `Couldn't upload your file: ${uploadError.message}` });
+      setStage({
+        name: "error",
+        message: isNetworkError(uploadError)
+          ? "Upload failed — your connection may have dropped. Try again, or upload a screenshot of the bill instead."
+          : `Couldn't upload your file: ${(uploadError as { message?: string }).message ?? "unknown error"}`,
+        uploadFailed: true,
+      });
       return;
     }
     setUploadedPath(path);
@@ -1870,6 +1893,15 @@ export default function UploadPage() {
             <button onClick={retryExtraction} className={buttonPrimary}>
               Try again
             </button>
+          ) : stage.uploadFailed && file ? (
+            <div className="flex gap-2">
+              <button onClick={() => handleUpload()} className={buttonPrimary}>
+                Try again
+              </button>
+              <button onClick={startOver} className={buttonSecondary}>
+                Start over
+              </button>
+            </div>
           ) : (
             <button onClick={startOver} className={buttonSecondary}>
               Start over
