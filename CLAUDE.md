@@ -47,7 +47,7 @@ Signed difference: code computes `amount_billed - amount_paid`. Positive means a
 
 - `category_rates` is **India GST only**. Foreign VAT is out of scope. When no rate is confirmed, fall back to arithmetic-only checks and say so.
 - GST answers are confident (hard-coded table). Handling-charge and similar answers are informational and non-committal.
-- Recurring bills are tracked month over month using existing tables, with no new table.
+- Recurring bills are compared month over month from the bills table (same provider, ordered by date); bill_metrics stores per-bill readings such as units consumed.
 - If something is unexplained, the email asks the **provider** to clarify, not the user.
 - One dispute email per bill, pointing at one line.
 - Follow-up questions are capped at 10 per bill, answered from the bill and the rates table.
