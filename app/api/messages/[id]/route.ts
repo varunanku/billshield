@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { draftKeptPct, originalDraftBody } from "@/lib/draft-kept";
 
 type ApiResponse = { success: true } | { success: false; reason: "bad_request" | "unauthorized" | "server_error"; message: string };
 
@@ -47,6 +48,20 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
   if (error) {
     console.error("Message action update failed:", error);
     return json({ success: false, reason: "server_error", message: "Couldn't save that. Please try again." }, 500);
+  }
+
+  // How much of the original default draft survived into what was sent.
+  // A separate, best-effort update: the action above is already saved, and
+  // a failure here (e.g. migration 0010 not applied yet) must not undo it.
+  if (finalBody !== undefined) {
+    const original = await originalDraftBody(supabase, id);
+    if (original !== null) {
+      const { error: pctError } = await supabase
+        .from("messages")
+        .update({ draft_kept_pct: draftKeptPct(original, finalBody) })
+        .eq("id", id);
+      if (pctError) console.error("draft_kept_pct update failed:", pctError);
+    }
   }
 
   return json({ success: true }, 200);
