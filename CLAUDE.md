@@ -26,16 +26,20 @@ Win condition: the user actually sends the message (or consciously chooses not t
 - LLM API called only from server routes
 - Secrets in local `.env` and Vercel Environment Variables only
 
-## Data model (six tables)
+## Data model (eight tables)
 
 Full column detail is in the BillShield submission document. Table names:
 
-- `users`
+- `users` (includes `full_name`)
 - `bills` (includes `category`)
 - `line_items` (can hold an "Amount Paid" label for signed paid-vs-billed differences)
 - `promises`
-- `messages` (includes `action_taken`, `tone_preset_used`, `final_body`; links back to the `line_items` row it disputes: the proof link)
+- `messages` (includes `action_taken`, `tone_preset_used`, `final_body`, `draft_kept_pct`; links back to the `line_items` row it disputes: the proof link)
 - `category_rates` (`category`, `rate_percent`, `rate_type`, `source_note`, `last_verified`)
+- `bill_metrics`
+- `message_events`
+
+RLS is on every table, proven by a 48-check two-user test (`scripts/rls-two-user-test.mjs`).
 
 Signed difference: code computes `amount_billed - amount_paid`. Positive means a dispute email to the provider. Negative means the user overpaid, so draft a refund request.
 
@@ -47,6 +51,9 @@ Signed difference: code computes `amount_billed - amount_paid`. Positive means a
 - If something is unexplained, the email asks the **provider** to clarify, not the user.
 - One dispute email per bill, pointing at one line.
 - Follow-up questions are capped at 10 per bill, answered from the bill and the rates table.
+- Promise-based gaps (bill vs. what the user expected) are worded as questions to the provider, never as confirmed errors.
+- Tax-rate comparisons only fire when an HSN/SAC code is printed on the bill, and only report overcharges.
+- Uploads read the file into memory the moment it's picked (fixes Android Google Photos) and resize large photos before upload.
 
 ## UI
 

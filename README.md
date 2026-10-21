@@ -46,6 +46,7 @@ Built solo by [Varun Sharma](https://github.com/varunanku) for the 100x Engineer
 - **Follow-up chat with suggestion chips.** Code picks the chips from what the bill actually contains. Each bill allows up to 10 questions.
 - **6 tone presets** for the email: Polite, Firm, Formal, Brief, Friendly and Escalation. Which preset you use is tracked so tone usage can be reported.
 - **Reliable photo uploads.** Photos over 1.5 MB or 2000 px are resized in the browser to a 2000 px JPEG before upload (PDFs are left alone). A dropped connection is retried once, then the app suggests a screenshot instead.
+- **Android Google Photos uploads fixed.** Photos are read into memory the moment they're picked. Uploads from Android's Google Photos picker used to fail silently with "Failed to fetch", and the Supabase logs confirmed nothing reached the server.
 - **Send funnel.** Copy, Open in email app and "I've sent it" are each logged, along with how much of the first draft the user kept (word-level similarity, computed in code). `scripts/tone-stats.mjs` reports the funnel.
 
 ## Tech stack
