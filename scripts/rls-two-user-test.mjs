@@ -2,7 +2,8 @@
 // Run with: node --env-file=.env.local scripts/rls-two-user-test.mjs
 //
 // Creates two throwaway users via the admin API, has user A write one bill
-// + line item + promise + message + bill_metrics row + one storage file,
+// + line item + promise + message + message_events row + bill_metrics row
+// + one storage file,
 // then proves user B (and an anon client) cannot read, modify or link to
 // any of it -- including history data (Phase 3) -- and that user A still
 // can. Prints PASS/FAIL per check, then deletes everything it created
@@ -49,7 +50,7 @@ const emailA = `rls-test-a-${stamp}@example.com`;
 const emailB = `rls-test-b-${stamp}@example.com`;
 
 let userA, userB, clientA, clientB, anonClient;
-let billA, lineItemA, promiseA, messageA, billB, metricA;
+let billA, lineItemA, promiseA, messageA, billB, metricA, eventA;
 const filePathA = (name) => `${userA.id}/${name}`;
 const TEST_FILE_NAME = `rls-test-${stamp}.txt`;
 
@@ -121,6 +122,15 @@ async function setup() {
   if (messageRes.error) throw messageRes.error;
   messageA = messageRes.data;
   check("setup: user A can insert a message linking own line item", true);
+
+  const eventRes = await clientA
+    .from("message_events")
+    .insert({ message_id: messageA.id, user_id: userA.id, event_type: "copied", draft_kept_pct: 100 })
+    .select()
+    .single();
+  if (eventRes.error) throw eventRes.error;
+  eventA = eventRes.data;
+  check("setup: user A can insert a message_events row for own message", true);
 
   const metricRes = await clientA
     .from("bill_metrics")
@@ -208,6 +218,31 @@ async function dataChecks() {
     .select();
   check("user B cannot insert a message linking to A's line item", denied(insMessageLinkingToA));
 
+  // message_events (0011): append-only funnel rows. B can't read A's, or
+  // add one to A's message -- neither as B nor by spoofing A's user_id --
+  // and nobody (not even A) can update or delete one: there are no
+  // update/delete policies or grants.
+  const selEvent = await clientB.from("message_events").select("*").eq("message_id", messageA.id);
+  check("user B cannot select A's message_events", denied(selEvent));
+
+  const insEventAsB = await clientB
+    .from("message_events")
+    .insert({ message_id: messageA.id, user_id: userB.id, event_type: "copied" })
+    .select();
+  check("user B cannot insert a message_event for A's message", denied(insEventAsB));
+
+  const insEventSpoofA = await clientB
+    .from("message_events")
+    .insert({ message_id: messageA.id, user_id: userA.id, event_type: "marked_sent" })
+    .select();
+  check("user B cannot insert a message_event spoofing A's user_id", denied(insEventSpoofA));
+
+  const updEvent = await clientA.from("message_events").update({ draft_kept_pct: 1 }).eq("id", eventA.id).select();
+  check("user A cannot update own message_event (append-only)", denied(updEvent));
+
+  const delEvent = await clientA.from("message_events").delete().eq("id", eventA.id).select();
+  check("user A cannot delete own message_event (append-only)", denied(delEvent));
+
   // category_rates is hand-maintained reference data: any authenticated
   // user can read it, but only the service role (bypassing RLS) writes it --
   // there is no insert/update policy at all, so this isn't even ownership-
@@ -243,6 +278,11 @@ async function dataChecks() {
   check("user A can still select own message", !ownMessage.error && ownMessage.data?.id === messageA.id);
   const ownMetric = await clientA.from("bill_metrics").select("*").eq("id", metricA.id).single();
   check("user A can still select own bill_metrics row", !ownMetric.error && ownMetric.data?.id === metricA.id);
+  const ownEvent = await clientA.from("message_events").select("*").eq("id", eventA.id).single();
+  check(
+    "user A can still select own message_event, unchanged",
+    !ownEvent.error && ownEvent.data?.id === eventA.id && Number(ownEvent.data?.draft_kept_pct) === 100
+  );
 }
 
 async function storageChecks() {

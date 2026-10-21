@@ -969,8 +969,22 @@ export default function UploadPage() {
         })
       : [];
 
+  // Funnel tracking (message_events). Fire-and-forget: never awaited, never
+  // delays the button's own action, and every failure is swallowed. The
+  // server computes draft_kept_pct from the editor text sent here.
+  function recordMessageEvent(eventType: "copied" | "opened_email_app" | "marked_sent") {
+    if (!emailDraft) return;
+    fetch(`/api/messages/${emailDraft.messageId}/events`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ event_type: eventType, final_body: emailDraft.body }),
+      keepalive: true,
+    }).catch(() => {});
+  }
+
   async function handleCopyEmail() {
     if (!emailDraft) return;
+    recordMessageEvent("copied");
     await navigator.clipboard.writeText(`Subject: ${emailDraft.subject}\n\n${emailDraft.body}`);
     triggerThankYou();
   }
@@ -984,6 +998,7 @@ export default function UploadPage() {
     if (!emailDraft) return;
     const edited = emailDraft.body !== emailDraft.originalBody;
     const actionTaken = edited ? "sent_manually_edited" : emailDraft.isDefaultTone ? "sent_as_is" : "sent_with_tone_preset";
+    recordMessageEvent("marked_sent");
     triggerThankYou();
     try {
       const res = await fetch(`/api/messages/${emailDraft.messageId}`, {
@@ -1680,7 +1695,13 @@ export default function UploadPage() {
                     <p className="text-sm text-text-muted">Check the message matches your paper bill, then send it to your provider.</p>
                   </div>
                   <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
-                    <a href={mailtoHref()} onClick={triggerThankYou} className={`${buttonPrimary} w-full text-center sm:w-auto`}>
+                    <a
+                      href={mailtoHref()}
+                      onClick={() => {
+                        recordMessageEvent("opened_email_app");
+                        triggerThankYou();
+                      }}
+                      className={`${buttonPrimary} w-full text-center sm:w-auto`}>
                       Open in email app
                     </a>
                     <button type="button" onClick={handleCopyEmail} className={`${buttonSecondary} w-full sm:w-auto`}>
