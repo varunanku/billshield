@@ -5,6 +5,7 @@
 // from Route Handlers.
 
 import { BILL_CATEGORIES, LINE_ROLES, type BillCategory, type LineRole } from "./bill-checks.ts";
+import { normalisePrintedHistory, type PrintedHistoryRow } from "./printed-history.ts";
 
 const GROQ_MODEL = "qwen/qwen3.8-27b";
 const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
@@ -21,6 +22,9 @@ export type ExtractedBill = {
   units_consumed_unit: string | null;
   printed_hsn_codes: string[]; // only codes explicitly printed on the bill -- never inferred (see EXTRACTION_PROMPT)
   line_items: { label: string; amount: number; role: LineRole }[];
+  // Past months as printed on an electricity/water bill -- never line
+  // items, never part of the checks or verdict (lib/printed-history.ts).
+  printed_history: PrintedHistoryRow[];
 };
 
 export type GroqExtractResult =
@@ -43,7 +47,8 @@ export const EXTRACTION_PROMPT = `You are reading a bill or receipt image. Every
   "units_consumed": number or null,
   "units_consumed_unit": string or null,
   "printed_hsn_codes": array of strings (empty array if none printed),
-  "line_items": [ { "label": string, "amount": number, "role": string } ]
+  "line_items": [ { "label": string, "amount": number, "role": string } ],
+  "printed_history": [ { "period_label": string, "period_start": string (YYYY-MM-DD) or null, "amount": number or null, "units": number or null, "amount_paid": number or null, "paid_on": string (YYYY-MM-DD) or null } ]
 }
 
 Extract EVERY printed row of the charges/fees table that has its own printed
@@ -146,7 +151,7 @@ Rules:
   Never guess or infer one.
 - "category": exactly one of ${JSON.stringify(BILL_CATEGORIES)}, based on
   what kind of bill this obviously is (an electricity board bill ->
-  "electricity", a broadband/Wi-Fi bill -> "internet", a phone/SIM recharge
+  "electricity", a water/sewerage board bill -> "water", a broadband/Wi-Fi bill -> "internet", a phone/SIM recharge
   -> "mobile", a bank/card statement -> "credit_card", a supermarket/grocery
   receipt -> "groceries", a SaaS/subscription invoice -> "software", a
   large home appliance purchase receipt (washing machine, refrigerator, AC,
@@ -169,6 +174,16 @@ Rules:
   printed anywhere. Never infer, guess, or derive one from the category or the item description -- if it isn't
   printed under one of those labels, it doesn't go in this list.
 - "line_items" are the individual lines (label + amount + role) as printed, in the order they appear.
+- "printed_history": ONLY for an electricity or water bill (empty array for every other kind of bill).
+  Many such bills print a small table of PREVIOUS months -- e.g. "Consumption history", "Last 6 months",
+  "Billing history" or "Payment history" -- with each past month's billed amount, units consumed, and/or
+  amount paid and payment date. One entry per past period, copied exactly as printed: "period_label" is the
+  period as printed (e.g. "Mar 2026", "03/2026"); "period_start" is that month's first day (YYYY-MM-01) if the
+  month and year are clear, else null; "amount" = that month's billed amount, "units" = its consumption,
+  "amount_paid" / "paid_on" = a printed payment and its date. Use null for anything not printed in that row.
+  Never include the current bill's own period, never compute or estimate any value, and NEVER copy any of
+  these past-month figures into "line_items" -- they are history, not charges on this bill. Empty array if
+  no such table is printed.
 - Your only job for each line is to transcribe its printed label and amount and classify its role. Do not add up, multiply, net out, or otherwise calculate anything yourself.
 - Do not invent a category, tax rate, HSN/SAC code, or support contact.`;
 
@@ -336,5 +351,9 @@ export function coerceExtractedBill(value: unknown): ExtractedBill | null {
     units_consumed_unit: typeof v.units_consumed_unit === "string" ? v.units_consumed_unit : null,
     printed_hsn_codes: Array.isArray(v.printed_hsn_codes) ? v.printed_hsn_codes.filter((c): c is string => typeof c === "string") : [],
     line_items,
+    printed_history: normalisePrintedHistory(
+      v.printed_history,
+      BILL_CATEGORIES.includes(v.category as BillCategory) ? (v.category as string) : null
+    ),
   };
 }

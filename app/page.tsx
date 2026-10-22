@@ -29,6 +29,7 @@ import { computeTaxBreakdown, summarizeTaxBreakdown, computeEffectiveTaxRates, t
 import { ThemeSwitcher } from "@/app/theme-switcher";
 import { buildThankYouMessage, UNKNOWN_PROVIDER } from "@/lib/thank-you";
 import { buildSuggestionChips } from "@/lib/chat-chips";
+import type { PrintedHistoryRow } from "@/lib/printed-history";
 import {
   prepareUploadFile,
   readIntoMemory,
@@ -50,6 +51,7 @@ type ExtractedBill = {
   units_consumed_unit: string | null;
   printed_hsn_codes: string[];
   line_items: BillLine[];
+  printed_history: PrintedHistoryRow[];
 };
 
 type ExtractResponse =
@@ -531,6 +533,10 @@ export default function UploadPage() {
   // here for the live tax-rate comparison (lib/gst.ts) and the follow-up
   // chat's grounding facts.
   const [printedHsnCodes, setPrintedHsnCodes] = useState<string[]>([]);
+  // Past months as printed on an electricity/water bill: shown read-only on
+  // the review screen (the user can delete wrong rows), saved on confirm,
+  // never part of the checks or verdict.
+  const [printedHistory, setPrintedHistory] = useState<PrintedHistoryRow[]>([]);
   const [billDate, setBillDate] = useState("");
   const [total, setTotal] = useState("");
   const [lines, setLines] = useState<EditableLine[]>([]);
@@ -706,6 +712,7 @@ export default function UploadPage() {
         units_consumed_unit: data.extraction.units_consumed_unit ?? null,
       });
       setPrintedHsnCodes(data.extraction.printed_hsn_codes ?? []);
+      setPrintedHistory(data.extraction.printed_history ?? []);
       setBillDate(data.extraction.bill_date ?? "");
       setTotal(data.extraction.total !== null ? String(data.extraction.total) : "");
       setLines(
@@ -811,6 +818,7 @@ export default function UploadPage() {
           total: parsedTotal,
           line_items: parsedLines,
           promise,
+          printed_history: printedHistory,
         }),
       });
       const data: ConfirmResponse = await res.json();
@@ -866,6 +874,7 @@ export default function UploadPage() {
       units_consumed_unit: null,
     });
     setPrintedHsnCodes([]);
+    setPrintedHistory([]);
     setBillDate("");
     setTotal("");
     setLines([]);
@@ -1532,6 +1541,41 @@ export default function UploadPage() {
           {taxSummary && <p className="text-sm text-text-muted">{taxSummary}</p>}
 
           <ChecksSummary checks={livePreview} total={parsedTotal} />
+
+          {printedHistory.length > 0 && (
+            <div className="rounded-lg border border-border p-4">
+              <p className="mb-1 flex items-center gap-1.5 font-bold">
+                Past months, as printed on your bill
+                <InfoTooltip text="Read off the history table on your bill. BillShield doesn't check these figures and never uses them in the verdict -- only to compare months. Delete any row that was read wrong." />
+              </p>
+              <div className="flex flex-col divide-y divide-border text-sm">
+                {printedHistory.map((row, i) => (
+                  <div key={`${row.period_label}-${i}`} className="flex items-center justify-between gap-2 py-2">
+                    <span>{row.period_label}</span>
+                    <div className="flex items-center gap-3">
+                      <span className="font-mono tabular-nums text-text-muted">
+                        {[
+                          row.amount !== null ? `Rs ${money(row.amount)}` : null,
+                          row.units !== null ? `${row.units} units` : null,
+                          row.amount_paid !== null ? `paid Rs ${money(row.amount_paid)}` : null,
+                        ]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setPrintedHistory((prev) => prev.filter((_, j) => j !== i))}
+                        aria-label={`Delete ${row.period_label}`}
+                        className="text-text-muted hover:text-danger"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           <div className="rounded-lg border border-border p-4">
             <p className="mb-2 flex items-center gap-1.5 font-bold">

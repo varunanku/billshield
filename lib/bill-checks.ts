@@ -28,6 +28,7 @@ export type BillCategory =
   | "appliance"
   | "electronics"
   | "cosmetics"
+  | "water"
   | "other";
 export const BILL_CATEGORIES: BillCategory[] = [
   "electricity",
@@ -39,6 +40,7 @@ export const BILL_CATEGORIES: BillCategory[] = [
   "appliance",
   "electronics",
   "cosmetics",
+  "water",
   "other",
 ];
 

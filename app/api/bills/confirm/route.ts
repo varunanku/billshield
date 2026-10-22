@@ -13,6 +13,7 @@ import {
 import { decideVerdict, type Verdict } from "@/lib/verdict";
 import { findTaxOvercharge } from "@/lib/gst";
 import { confirmSchema, parseInput } from "@/lib/schemas";
+import { historyAllowedFor, type PrintedHistoryRow } from "@/lib/printed-history";
 
 export const maxDuration = 30;
 
@@ -37,6 +38,9 @@ type ConfirmPayload = {
   printed_hsn_codes: string[];
   line_items: BillLine[];
   promise: PromiseInput;
+  // Past months as printed (electricity/water only) -- stored on their own,
+  // never passed to computeBillChecks or decideVerdict below.
+  printed_history: PrintedHistoryRow[];
 };
 
 type ApiResponse =
@@ -102,6 +106,7 @@ export async function POST(request: Request) {
     printed_hsn_codes,
     line_items,
     promise,
+    printed_history,
   } = validated.data;
 
   // bills.file_path is about to be set to this path -- it must be this
@@ -206,6 +211,14 @@ export async function POST(request: Request) {
     // Same as the promise below -- a metric is supplementary, never worth
     // failing the whole confirm over.
     if (metricError) console.error("Bill metric insert failed:", metricError);
+  }
+
+  if (historyAllowedFor(category) && printed_history.length > 0) {
+    const { error: historyError } = await supabase.from("bill_printed_history").insert(
+      printed_history.map((row) => ({ ...row, bill_id: bill.id, user_id: user.id, period_label: maskPII(row.period_label) }))
+    );
+    // Context only, like the metric above -- never worth failing the confirm.
+    if (historyError) console.error("Printed history insert failed:", historyError);
   }
 
   if (promise) {

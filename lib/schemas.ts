@@ -7,6 +7,7 @@
 import { z } from "zod";
 import { LINE_ROLES, BILL_CATEGORIES, type LineRole, type BillCategory } from "./bill-checks.ts";
 import { TONE_PRESETS } from "./email-draft.ts";
+import { normalisePrintedHistory } from "./printed-history.ts";
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const MAX_MONEY = 1e9; // well inside bills.total_amount's numeric(12,2)
@@ -61,6 +62,16 @@ export const confirmSchema = z.object(
     units_consumed: z.number().min(0).max(1e9).nullable().catch(null),
     units_consumed_unit: z.string().max(40).nullable().catch(null),
     printed_hsn_codes: z.array(z.string().max(20)).max(50).catch([]),
+    // Past months as printed (electricity/water only). Re-normalised here:
+    // the client's copy is never trusted to be well-formed. The category
+    // gate is applied in the route, where the validated category is known.
+    printed_history: z
+      .array(z.unknown())
+      .max(50)
+      .catch([])
+      .optional()
+      .default([])
+      .transform((rows) => normalisePrintedHistory(rows, "electricity")),
     line_items: z
       .array(lineSchema, { error: "At least one line item is required." })
       .min(1, "At least one line item is required.")
