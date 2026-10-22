@@ -2,8 +2,6 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { createClient } from "@/lib/supabase/client";
-import { signUpMetadata } from "@/lib/auth";
 
 // Minimal email/password auth -- nothing in CLAUDE.md's build order asked
 // for this page, but the upload flow needs a signed-in user for RLS to
@@ -11,7 +9,6 @@ import { signUpMetadata } from "@/lib/auth";
 // if you'd rather.
 export default function LoginPage() {
   const router = useRouter();
-  const supabase = createClient();
   const [mode, setMode] = useState<"signin" | "signup">("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -24,13 +21,29 @@ export default function LoginPage() {
     setMessage(null);
   }
 
+  // Both go through our server routes (app/api/auth/*), which validate the
+  // input and rate-limit attempts before Supabase sees them.
+  async function postAuth(path: string, body: object): Promise<string | null> {
+    try {
+      const res = await fetch(path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data: { success: boolean; message?: string } = await res.json();
+      return data.success ? null : (data.message ?? "Something went wrong. Please try again.");
+    } catch {
+      return "Couldn't reach the server. Check your connection and try again.";
+    }
+  }
+
   async function handleSignIn() {
     setLoading(true);
     setMessage(null);
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    const error = await postAuth("/api/auth/signin", { email, password });
     setLoading(false);
     if (error) {
-      setMessage(error.message);
+      setMessage(error);
       return;
     }
     router.push("/");
@@ -44,23 +57,10 @@ export default function LoginPage() {
     }
     setLoading(true);
     setMessage(null);
-    const { error } = await supabase.auth.signUp({
-      email,
-      password,
-      // window.location.origin, not a hardcoded URL -- works the same on
-      // localhost, a Vercel preview deploy, and production.
-      options: {
-        emailRedirectTo: `${window.location.origin}/auth/callback`,
-        data: signUpMetadata(fullName),
-      },
-    });
+    const error = await postAuth("/api/auth/signup", { email, password, fullName });
     setLoading(false);
     if (error) {
-      setMessage(
-        /rate limit/i.test(error.message)
-          ? "Too many sign-ups right now. Please wait a few minutes and try again."
-          : error.message
-      );
+      setMessage(error);
       return;
     }
     setMessage("Account created. Check your email to confirm, then sign in.");
@@ -166,7 +166,8 @@ export default function LoginPage() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   required
-                  minLength={6}
+                  minLength={mode === "signup" ? 8 : undefined}
+                  maxLength={72}
                   className={inputClasses}
                 />
               </label>

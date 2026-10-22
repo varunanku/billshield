@@ -3,12 +3,13 @@ import { createClient } from "@/lib/supabase/server";
 import { draftEmail, applySignature, type Tone, type TonePreset } from "@/lib/email-draft";
 import type { Facts } from "@/lib/verdict";
 import { draftEmailSchema, parseInput } from "@/lib/schemas";
+import { checkRateLimit, clientIp, rulesFor, tooManyMessage } from "@/lib/rate-limit";
 
 export const maxDuration = 30;
 
 type ApiResponse =
   | { success: true; messageId: string; subject: string; body: string; isDefaultTone: boolean }
-  | { success: false; reason: "bad_request" | "unauthorized" | "server_error"; message: string };
+  | { success: false; reason: "bad_request" | "unauthorized" | "rate_limited" | "server_error"; message: string };
 
 function json(body: ApiResponse, status: number) {
   return NextResponse.json(body, { status });
@@ -40,6 +41,12 @@ export async function POST(request: Request) {
     return json({ success: false, reason: "bad_request", message: validated.message }, 400);
   }
   const { billId, outcome, facts, tonePreset } = validated.data;
+
+  // Covers the first draft and every Regenerate (both hit this route).
+  const limit = await checkRateLimit(rulesFor("draftEmail", user.id, clientIp(request)));
+  if (!limit.ok) {
+    return json({ success: false, reason: "rate_limited", message: tooManyMessage(limit.retryAfterSeconds) }, 429);
+  }
   // confirmed_error is the only confident-tone outcome -- cannot_verify and
   // unexplained both draft a soft inquiry (the wording differs between
   // them inside draftEmail, keyed off facts, not off outcome). A gap

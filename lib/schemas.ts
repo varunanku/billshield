@@ -197,6 +197,39 @@ export const messageEventSchema = z.object(
   { error: "Request body was missing." }
 );
 
+// Sign-up / sign-in (app/api/auth/*). Email is trimmed and lowercased;
+// passwords are 8-72 characters (72 is bcrypt's limit).
+const email = z
+  .string({ error: "Please enter your email." })
+  .trim()
+  .toLowerCase()
+  .max(254, "That email is too long.")
+  .pipe(z.email("Please enter a valid email address."));
+
+export const signUpSchema = z.object(
+  {
+    email,
+    password: z
+      .string({ error: "Please enter a password." })
+      .min(8, "Password must be at least 8 characters.")
+      .max(72, "Password must be at most 72 characters."),
+    fullName: z
+      .string({ error: "Please enter your full name." })
+      .trim()
+      .min(1, "Please enter your full name.")
+      .max(100, "Name is too long (max 100 characters)."),
+  },
+  { error: "Request body was missing." }
+);
+
+export const signInSchema = z.object(
+  {
+    email,
+    password: z.string({ error: "Please enter your password." }).min(1, "Please enter your password.").max(72),
+  },
+  { error: "Request body was missing." }
+);
+
 // One plain sentence for a 400: the first problem found.
 export function parseInput<T extends z.ZodType>(
   schema: T,

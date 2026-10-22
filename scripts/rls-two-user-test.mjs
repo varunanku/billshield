@@ -247,6 +247,23 @@ async function dataChecks() {
   const delEvent = await clientA.from("message_events").delete().eq("id", eventA.id).select();
   check("user A cannot delete own message_event (append-only)", denied(delEvent));
 
+  // rate_limit_hits (0013): server-only. No user may read or write it, or
+  // call hit_rate_limit() to reset or burn someone else's counter. A
+  // "missing table/function" error is a FAIL, not a pass -- it means the
+  // migration hasn't been run, so nothing was actually proven.
+  const missing = (r) => /PGRST20[25]|42P01|42883|does not exist|Could not find/i.test(`${r.error?.code} ${r.error?.message}`);
+  const blocked = (r) => !missing(r) && denied(r);
+  const selLimits = await clientA.from("rate_limit_hits").select("*");
+  check("user cannot select rate_limit_hits", blocked(selLimits), missing(selLimits) ? "migration 0013 not applied" : undefined);
+  const insLimits = await clientA.from("rate_limit_hits").insert({ key: `x:${stamp}`, window_start: new Date().toISOString(), hits: 0 }).select();
+  check("user cannot insert into rate_limit_hits", blocked(insLimits), missing(insLimits) ? "migration 0013 not applied" : undefined);
+  const rpcLimit = await clientA.rpc("hit_rate_limit", { p_key: `signin:user:${emailB}`, p_limit: 1, p_window_seconds: 60 });
+  check(
+    "user cannot call hit_rate_limit()",
+    !missing(rpcLimit) && !!rpcLimit.error,
+    missing(rpcLimit) ? "migration 0013 not applied" : undefined
+  );
+
   // category_rates is hand-maintained reference data: any authenticated
   // user can read it, but only the service role (bypassing RLS) writes it --
   // there is no insert/update policy at all, so this isn't even ownership-

@@ -8,6 +8,7 @@ import { extractBillFromImages as extractWithOpenRouter } from "@/lib/openrouter
 import { USE_GROQ } from "@/lib/provider";
 import { extractSchema, parseInput } from "@/lib/schemas";
 import { sniffFileType } from "@/lib/file-type";
+import { checkRateLimit, clientIp, rulesFor, tooManyMessage } from "@/lib/rate-limit";
 
 const extractBillFromImages = USE_GROQ ? extractWithGroq : extractWithOpenRouter;
 
@@ -52,6 +53,19 @@ export async function POST(request: Request) {
     return json({ success: false, reason: "bad_request", message: validated.message }, 400);
   }
   const { path } = validated.data;
+
+  const limit = await checkRateLimit(rulesFor("extract", user.id, clientIp(request)));
+  if (!limit.ok) {
+    return json(
+      {
+        success: false,
+        reason: "rate_limited",
+        message: tooManyMessage(limit.retryAfterSeconds),
+        retryAfterSeconds: limit.retryAfterSeconds,
+      },
+      429
+    );
+  }
 
   // The service role client below bypasses storage RLS entirely, so this
   // ownership check is standing in for what RLS would otherwise enforce --

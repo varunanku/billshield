@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { followupSchema, idSchema, parseInput } from "@/lib/schemas";
+import { checkRateLimit, clientIp, rulesFor, tooManyMessage } from "@/lib/rate-limit";
 import {
   buildFollowupSystemPrompt,
   parseFollowupReply,
@@ -30,7 +31,7 @@ function answerFollowupQuestion(systemPrompt: string, history: ChatTurn[]) {
 
 type ApiResponse =
   | { success: true; reply: FollowupReply; messagesUsed: number }
-  | { success: false; reason: "bad_request" | "unauthorized" | "rate_limited" | "server_error"; message: string };
+  | { success: false; reason: "bad_request" | "unauthorized" | "rate_limited" | "throttled" | "server_error"; message: string };
 
 function json(body: ApiResponse, status: number) {
   return NextResponse.json(body, { status });
@@ -73,6 +74,13 @@ export async function POST(request: Request, routeContext: { params: Promise<{ i
       return json({ success: false, reason: "bad_request", message: validated.message }, 400);
     }
     const { question, context } = validated.data;
+
+    // "throttled", not "rate_limited": the client treats rate_limited as the
+    // permanent 10-questions-per-bill cap, while this one passes with time.
+    const limit = await checkRateLimit(rulesFor("chat", user.id, clientIp(request)));
+    if (!limit.ok) {
+      return json({ success: false, reason: "throttled", message: tooManyMessage(limit.retryAfterSeconds) }, 429);
+    }
 
     // RLS-scoped: this also confirms the bill belongs to the signed-in user.
     const { data: bill, error: billError } = await supabase.from("bills").select("id, category").eq("id", billId).single();
