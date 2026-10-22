@@ -805,7 +805,7 @@ export default function UploadPage() {
       error: userError,
     } = await supabase.auth.getUser();
     if (userError || !user) {
-      setStage({ name: "error", message: "Please sign in again." });
+      setStage({ name: "error", message: "Your session has expired. Refresh the page to sign in again." });
       return;
     }
 
@@ -929,15 +929,20 @@ export default function UploadPage() {
       });
       const data: ConfirmResponse = await res.json();
 
+      // A failed save keeps the user on the review screen with every edit
+      // intact (the notice says what happened), so they can just confirm again.
       if (!data.success) {
         setIsConfirming(false);
-        setStage({ name: "error", message: data.message });
+        setStage({ name: "reviewing", notice: `${data.message} Your edits are still here.` });
         return;
       }
       showVerdict(data.bill, data.checks, data.verdict);
     } catch {
       setIsConfirming(false);
-      setStage({ name: "error", message: "Couldn't reach the server. Check your connection and try again." });
+      setStage({
+        name: "reviewing",
+        notice: "Couldn't reach the server. Check your connection, then press the confirm button again.",
+      });
     }
   }
 
@@ -1075,7 +1080,7 @@ export default function UploadPage() {
           isDefaultTone: data.isDefaultTone,
         });
       })
-      .catch(() => setEmailError("Couldn't reach the server to draft the email."));
+      .catch(() => setEmailError("Couldn't reach the server to draft the email. Check your connection, then press Try again."));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stage]);
 
@@ -1198,7 +1203,7 @@ export default function UploadPage() {
       });
       setEmailActionTaken(null); // a new row -- not sent yet
     } catch {
-      setEmailError("Couldn't reach the server to regenerate the email.");
+      setEmailError("Couldn't reach the server to redraft the email. Check your connection, then press Try again.");
     } finally {
       setRegenerating(false);
     }
@@ -1544,6 +1549,11 @@ export default function UploadPage() {
             <span className="text-sm font-bold text-text-muted">Line items</span>
             <InfoTooltip text="The AI only reads the text off your bill. Every sum, subtotal check and the final verdict are calculated by BillShield's checks, never by the AI. The coloured tag on each line says what kind it is: a charge, tax, discount, payment and so on." />
           </div>
+          {lines.length === 0 && (
+            <p className="text-sm text-warning">
+              No lines yet. Press &quot;Something missing?&quot; below and add the lines printed on your bill.
+            </p>
+          )}
           <div className="flex flex-col divide-y divide-border">
             {lines.map((line, i) => {
               const amountInvalid = line.amount.trim() !== "" && parseAmountInput(line.amount) === null;
@@ -1860,7 +1870,16 @@ export default function UploadPage() {
             <div className={card}>
               <p className="mb-2 font-bold">{stage.verdict.outcome === "confirmed_error" && stage.verdict.tone === "confident" ? "Dispute email" : "Inquiry email"}</p>
               {draftingEmail && <p className="text-text-muted">Drafting...</p>}
-              {emailError && <p className="text-danger">{emailError}</p>}
+              {emailError && (
+                <div className="flex flex-col items-start gap-2">
+                  <p className="text-danger">{emailError}</p>
+                  {!isSample && (
+                    <button type="button" onClick={handleRegenerate} disabled={regenerating} className={buttonSecondary}>
+                      {regenerating ? "Trying again..." : "Try again"}
+                    </button>
+                  )}
+                </div>
+              )}
               {emailDraft && (
                 <div className="flex flex-col gap-3">
                   <label className="flex flex-col gap-1 text-sm">

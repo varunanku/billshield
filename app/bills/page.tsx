@@ -125,7 +125,11 @@ async function BillsList() {
   );
 
   if (groups.length === 0) {
-    return <p className="text-text-muted">No bills yet -- upload one to see it here.</p>;
+    return (
+      <p className="text-text-muted">
+        No bills yet. <Link href="/" className="underline underline-offset-2 hover:text-text">Upload your first bill</Link> to see it here.
+      </p>
+    );
   }
 
   return (

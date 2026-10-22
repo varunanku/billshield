@@ -44,7 +44,7 @@ export async function POST(request: Request, routeContext: { params: Promise<{ i
     }
 
     if (!idSchema.safeParse(billId).success) {
-      return json({ success: false, reason: "bad_request", message: "That ID isn't valid." }, 400);
+      return json({ success: false, reason: "bad_request", message: "That link isn't valid. Start over from the home page." }, 400);
     }
 
     const parsed = await request.json().catch(() => null);
@@ -61,7 +61,7 @@ export async function POST(request: Request, routeContext: { params: Promise<{ i
       .eq("id", billId)
       .single();
     if (billError || !bill) {
-      return json({ success: false, reason: "unauthorized", message: "That bill doesn't belong to you." }, 401);
+      return json({ success: false, reason: "unauthorized", message: "That bill isn't in your account. Open one of your own bills from My bills." }, 401);
     }
 
     const { data: lineRows, error: lineError } = await supabase
@@ -70,14 +70,14 @@ export async function POST(request: Request, routeContext: { params: Promise<{ i
       .eq("bill_id", billId)
       .order("line_order", { ascending: true });
     if (lineError || !lineRows) {
-      return json({ success: false, reason: "server_error", message: "Couldn't load this bill's line items." }, 500);
+      return json({ success: false, reason: "server_error", message: "Couldn't load this bill's lines. Please try again in a moment." }, 500);
     }
     if (correction.field === "line" && lineRows.some((r) => r.role === null)) {
       return json(
         {
           success: false,
           reason: "bad_request",
-          message: "This bill was saved before line roles were tracked, so a line correction can't be applied here.",
+          message: "This older bill can't be corrected here. Upload it again to fix that line.",
         },
         400
       );
@@ -93,7 +93,7 @@ export async function POST(request: Request, routeContext: { params: Promise<{ i
     );
 
     if (correction.field === "line" && (correction.line_index! < 0 || correction.line_index! >= lines.length)) {
-      return json({ success: false, reason: "bad_request", message: "That line no longer exists on this bill." }, 400);
+      return json({ success: false, reason: "bad_request", message: "That line isn't on this bill any more. Ask about a line you can see." }, 400);
     }
 
     // "Unknown provider" is confirm's storage-only placeholder for bills.

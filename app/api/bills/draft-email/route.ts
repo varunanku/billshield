@@ -62,7 +62,7 @@ export async function POST(request: Request) {
     .eq("id", billId)
     .single();
   if (billError || !bill) {
-    return json({ success: false, reason: "unauthorized", message: "That bill doesn't belong to you." }, 401);
+    return json({ success: false, reason: "unauthorized", message: "That bill isn't in your account. Open one of your own bills from My bills." }, 401);
   }
 
   // Code, not the prompt -- the sign-off's "[Your Name]" placeholder is

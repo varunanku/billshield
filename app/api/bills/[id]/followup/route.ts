@@ -66,7 +66,7 @@ export async function POST(request: Request, routeContext: { params: Promise<{ i
     }
 
     if (!idSchema.safeParse(billId).success) {
-      return json({ success: false, reason: "bad_request", message: "That ID isn't valid." }, 400);
+      return json({ success: false, reason: "bad_request", message: "That link isn't valid. Start over from the home page." }, 400);
     }
 
     const parsed = await request.json().catch(() => null);
@@ -90,7 +90,7 @@ export async function POST(request: Request, routeContext: { params: Promise<{ i
       .eq("id", billId)
       .single();
     if (billError || !bill) {
-      return json({ success: false, reason: "unauthorized", message: "That bill doesn't belong to you." }, 401);
+      return json({ success: false, reason: "unauthorized", message: "That bill isn't in your account. Open one of your own bills from My bills." }, 401);
     }
 
     const { data: priorRows, error: historyError } = await supabase
@@ -113,7 +113,7 @@ export async function POST(request: Request, routeContext: { params: Promise<{ i
     const userTurnsUsed = (priorRows ?? []).filter((r) => r.role === "user").length;
     if (userTurnsUsed >= MAX_FOLLOWUP_MESSAGES) {
       return json(
-        { success: false, reason: "rate_limited", message: `You've reached the ${MAX_FOLLOWUP_MESSAGES}-question limit for this bill.` },
+        { success: false, reason: "rate_limited", message: `You've reached the ${MAX_FOLLOWUP_MESSAGES}-question limit for this bill. Upload another bill to keep asking.` },
         429
       );
     }
@@ -194,12 +194,12 @@ export async function POST(request: Request, routeContext: { params: Promise<{ i
       const historyResult = computeHistoryQuery(values);
       const followupTurn = buildHistoryResultTurn(reply.request, historyResult);
       const secondResult = await answerFollowupQuestion(systemPrompt, [...history, { role: "assistant", content: result.text }, followupTurn]);
-      reply = secondResult.ok ? parseFollowupReply(secondResult.text) : { type: "answer", text: "Couldn't look up that history just now. Please try again." };
+      reply = secondResult.ok ? parseFollowupReply(secondResult.text) : { type: "answer", text: "Couldn't look up your past bills just now. Ask again in a moment." };
       // However the model phrased it, this turn is answering the user's
       // ORIGINAL question -- a nested get_history/correction here would
       // just be confusing, so anything but a plain answer falls back to
       // its raw text rather than recursing further.
-      if (reply.type !== "answer") reply = { type: "answer", text: secondResult.ok ? secondResult.text : "Couldn't look up that history just now." };
+      if (reply.type !== "answer") reply = { type: "answer", text: secondResult.ok ? secondResult.text : "Couldn't look up your past bills just now. Ask again in a moment." };
     }
 
     // A correction proposal is stored as a readable summary, not the raw

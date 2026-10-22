@@ -73,7 +73,7 @@ export async function POST(request: Request) {
   // read their file. user.id comes from the session above, never from the
   // request body.
   if (!isValidOwnedPath(path, user.id)) {
-    return json({ success: false, reason: "unauthorized", message: "That file doesn't belong to you." }, 401);
+    return json({ success: false, reason: "unauthorized", message: "That file isn't in your account. Please upload your bill again." }, 401);
   }
 
   const admin = createAdminClient();
@@ -87,7 +87,7 @@ export async function POST(request: Request) {
   }
 
   if (fileBlob.size > MAX_FILE_BYTES) {
-    return json({ success: false, reason: "bad_request", message: "That file is too large (max 20MB)." }, 400);
+    return json({ success: false, reason: "bad_request", message: "That file is too large (max 20 MB). Upload a smaller photo or a screenshot." }, 400);
   }
 
   // Decide the type from the file's own first bytes, not the content-type
@@ -147,7 +147,7 @@ export async function POST(request: Request) {
       {
         success: false,
         reason: "server_error",
-        message: "Something went wrong reading this bill. Please try again.",
+        message: "Something went wrong reading this bill. Try again, or upload a clearer photo or screenshot.",
         notice: notice ?? undefined,
       },
       500

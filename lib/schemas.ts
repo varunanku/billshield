@@ -17,18 +17,18 @@ const categories = BILL_CATEGORIES as [BillCategory, ...BillCategory[]];
 
 export const money = z
   .number({ error: "Amounts must be numbers." })
-  .min(-MAX_MONEY, "That amount is too large.")
-  .max(MAX_MONEY, "That amount is too large.");
+  .min(-MAX_MONEY, "That amount is too large. Check it against your paper bill.")
+  .max(MAX_MONEY, "That amount is too large. Check it against your paper bill.");
 const label = z.string().trim().min(1, "Every line needs a label.").max(300, "A line label is too long (max 300 characters).");
 const shortText = (max: number) => z.string().trim().max(max, `That text is too long (max ${max} characters).`);
 const isoDate = z.string().regex(DATE_RE);
 
 // Route params: every bill/message id is a UUID.
-export const idSchema = z.guid({ error: "That ID isn't valid." });
+export const idSchema = z.guid({ error: "That link isn't valid. Start over from the home page." });
 
 export const extractSchema = z.object(
-  { path: z.string({ error: "No uploaded file path was given." }).min(1, "No uploaded file path was given.").max(200) },
-  { error: "Request body was missing." }
+  { path: z.string({ error: "No uploaded file was found. Please upload your bill again." }).min(1, "No uploaded file was found. Please upload your bill again.").max(200) },
+  { error: "Something was missing from that request. Please refresh the page and try again." }
 );
 
 const lineSchema = z.object(
@@ -43,7 +43,7 @@ const lineSchema = z.object(
 
 export const confirmSchema = z.object(
   {
-    path: z.string({ error: "No uploaded file path was given." }).min(1, "No uploaded file path was given.").max(200),
+    path: z.string({ error: "No uploaded file was found. Please upload your bill again." }).min(1, "No uploaded file was found. Please upload your bill again.").max(200),
     provider: shortText(200).optional().default(""),
     provider_legal_name: shortText(300)
       .nullable()
@@ -55,7 +55,7 @@ export const confirmSchema = z.object(
       .optional()
       .default("")
       .refine((v) => v === "" || DATE_RE.test(v), "Please enter a valid bill date."),
-    total: z.number({ error: "Please enter the bill total." }).min(-MAX_MONEY).max(MAX_MONEY, "That total is too large."),
+    total: z.number({ error: "Please enter the bill total." }).min(-MAX_MONEY).max(MAX_MONEY, "That total is too large. Check it against your paper bill."),
     category: z.enum(categories).nullable().catch(null),
     billing_period_start: isoDate.nullable().catch(null),
     billing_period_end: isoDate.nullable().catch(null),
@@ -75,7 +75,7 @@ export const confirmSchema = z.object(
     line_items: z
       .array(lineSchema, { error: "At least one line item is required." })
       .min(1, "At least one line item is required.")
-      .max(200, "Too many line items (max 200)."),
+      .max(200, "Too many lines (max 200). Remove duplicates, then confirm again."),
     promise: z
       .object({
         statement: shortText(1000),
@@ -86,15 +86,15 @@ export const confirmSchema = z.object(
       .default(null)
       .transform((p) => (p && p.statement ? p : null)),
   },
-  { error: "Bill data was missing." }
+  { error: "Something was missing from that request. Please refresh the page and try again." }
 );
 
 const disputedLine = z.object({ label: shortText(300), amount: money });
 
 export const factsSchema = z.object(
   {
-    provider: z.string().trim().min(1, "Facts were incomplete.").max(200),
-    billDate: z.string().trim().min(1, "Facts were incomplete.").max(40),
+    provider: z.string().trim().min(1, "Something was missing from that request. Please refresh the page and try again.").max(200),
+    billDate: z.string().trim().min(1, "Something was missing from that request. Please refresh the page and try again.").max(40),
     disputedLines: z.array(disputedLine).max(50).optional().default([]),
     gap: money,
     promisedAmount: money.nullable().optional().default(null),
@@ -117,17 +117,17 @@ export const factsSchema = z.object(
       .optional()
       .default(null),
   },
-  { error: "Missing facts." }
+  { error: "Something was missing from that request. Please refresh the page and try again." }
 );
 
 export const draftEmailSchema = z.object(
   {
     billId: idSchema,
-    outcome: z.enum(["confirmed_error", "cannot_verify", "unexplained"], { error: "Invalid outcome." }),
+    outcome: z.enum(["confirmed_error", "cannot_verify", "unexplained"], { error: "Something was missing from that request. Please refresh the page and try again." }),
     facts: factsSchema,
     tonePreset: z.enum(TONE_PRESETS).nullable().optional().default(null),
   },
-  { error: "Request body was missing." }
+  { error: "Something was missing from that request. Please refresh the page and try again." }
 );
 
 export const followupSchema = z.object(
@@ -136,7 +136,7 @@ export const followupSchema = z.object(
       .string({ error: "No question was given." })
       .trim()
       .min(1, "No question was given.")
-      .max(1000, "That question is too long."),
+      .max(1000, "That question is too long. Shorten it and send it again."),
     context: z.object(
       {
         provider: shortText(200).nullable().optional().default(null),
@@ -159,10 +159,10 @@ export const followupSchema = z.object(
           .optional()
           .default(null),
       },
-      { error: "Missing bill context." }
+      { error: "Something was missing from that request. Please refresh the page and try again." }
     ),
   },
-  { error: "Request body was missing." }
+  { error: "Something was missing from that request. Please refresh the page and try again." }
 );
 
 export const applyCorrectionSchema = z.object(
@@ -170,42 +170,42 @@ export const applyCorrectionSchema = z.object(
     correction: z
       .object(
         {
-          field: z.enum(["provider", "bill_date", "printed_total", "line"], { error: "Invalid correction field." }),
+          field: z.enum(["provider", "bill_date", "printed_total", "line"], { error: "Something was missing from that request. Please refresh the page and try again." }),
           line_index: z.number().int().min(0).max(500).nullable().optional().default(null),
           new_label: shortText(300).nullable().optional().default(null),
           new_role: z.enum(roles).nullable().optional().default(null),
           new_amount: money.nullable().optional().default(null),
           reason: shortText(500).optional().default(""),
         },
-        { error: "Missing correction." }
+        { error: "Something was missing from that request. Please refresh the page and try again." }
       )
-      .refine((c) => c.field !== "line" || c.line_index !== null, "A line correction needs a line_index.")
+      .refine((c) => c.field !== "line" || c.line_index !== null, "That correction didn't say which line to change. Ask the assistant again.")
       .refine(
         (c) => c.field !== "bill_date" || c.new_label === null || DATE_RE.test(c.new_label),
-        "A corrected bill date must look like YYYY-MM-DD."
+        "A corrected bill date must look like YYYY-MM-DD. Ask the assistant again with the full date."
       ),
   },
-  { error: "Request body was missing." }
+  { error: "Something was missing from that request. Please refresh the page and try again." }
 );
 
-const finalBody = z.string().max(20000, "That message is too long.").optional();
+const finalBody = z.string().max(20000, "That message is too long. Shorten it and try again.").optional();
 
 export const messageActionSchema = z.object(
   {
     action_taken: z.enum(["sent_as_is", "sent_with_tone_preset", "sent_manually_edited", "not_sent"], {
-      error: "Invalid action.",
+      error: "Something was missing from that request. Please refresh the page and try again.",
     }),
     final_body: finalBody,
   },
-  { error: "Request body was missing." }
+  { error: "Something was missing from that request. Please refresh the page and try again." }
 );
 
 export const messageEventSchema = z.object(
   {
-    event_type: z.enum(["copied", "opened_email_app", "marked_sent"], { error: "Invalid event." }),
+    event_type: z.enum(["copied", "opened_email_app", "marked_sent"], { error: "Something was missing from that request. Please refresh the page and try again." }),
     final_body: finalBody,
   },
-  { error: "Request body was missing." }
+  { error: "Something was missing from that request. Please refresh the page and try again." }
 );
 
 // Sign-up / sign-in (app/api/auth/*). Email is trimmed and lowercased;
@@ -214,7 +214,7 @@ const email = z
   .string({ error: "Please enter your email." })
   .trim()
   .toLowerCase()
-  .max(254, "That email is too long.")
+  .max(254, "That email address is too long. Please use a different one.")
   .pipe(z.email("Please enter a valid email address."));
 
 export const signUpSchema = z.object(
@@ -230,7 +230,7 @@ export const signUpSchema = z.object(
       .min(1, "Please enter your full name.")
       .max(100, "Name is too long (max 100 characters)."),
   },
-  { error: "Request body was missing." }
+  { error: "Something was missing from that request. Please refresh the page and try again." }
 );
 
 export const signInSchema = z.object(
@@ -238,7 +238,7 @@ export const signInSchema = z.object(
     email,
     password: z.string({ error: "Please enter your password." }).min(1, "Please enter your password.").max(72),
   },
-  { error: "Request body was missing." }
+  { error: "Something was missing from that request. Please refresh the page and try again." }
 );
 
 // One plain sentence for a 400: the first problem found.
@@ -250,6 +250,6 @@ export function parseInput<T extends z.ZodType>(
   if (result.success) return { ok: true, data: result.data };
   const issue = result.error.issues[0];
   const where = issue?.path.length ? ` (${issue.path.join(".")})` : "";
-  const message = issue?.message && !/^Invalid input/.test(issue.message) ? issue.message : `Some of the details sent were invalid${where}.`;
+  const message = issue?.message && !/^Invalid input/.test(issue.message) ? issue.message : `Some of the details sent were invalid${where}. Please check them and try again.`;
   return { ok: false, message };
 }

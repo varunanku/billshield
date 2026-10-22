@@ -25,7 +25,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
   }
 
   if (!idSchema.safeParse(id).success) {
-    return json({ success: false, reason: "bad_request", message: "That ID isn't valid." }, 400);
+    return json({ success: false, reason: "bad_request", message: "That link isn't valid. Start over from the home page." }, 400);
   }
   const validated = parseInput(messageActionSchema, await request.json().catch(() => null));
   if (!validated.ok) {

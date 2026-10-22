@@ -113,7 +113,7 @@ export async function POST(request: Request) {
   // user's own upload, not one they typed in pointing at someone else's
   // file. user.id comes from the session above, never from the request body.
   if (!isValidOwnedPath(path, user.id)) {
-    return json({ success: false, reason: "unauthorized", message: "That file doesn't belong to you." }, 401);
+    return json({ success: false, reason: "unauthorized", message: "That file isn't in your account. Please upload your bill again." }, 401);
   }
 
   // Neither is required on the review screen. "your provider"/today's date
