@@ -5,8 +5,6 @@ import { isValidOwnedPath } from "@/lib/storage-paths";
 import {
   computeBillChecks,
   toPersistedLines,
-  LINE_ROLES,
-  BILL_CATEGORIES,
   type BillLine,
   type BillCategory,
   type BillChecks,
@@ -14,6 +12,7 @@ import {
 } from "@/lib/bill-checks";
 import { decideVerdict, type Verdict } from "@/lib/verdict";
 import { findTaxOvercharge } from "@/lib/gst";
+import { confirmSchema, parseInput } from "@/lib/schemas";
 
 export const maxDuration = 30;
 
@@ -239,86 +238,5 @@ export async function POST(request: Request) {
 }
 
 function validatePayload(value: unknown): { ok: true; data: ConfirmPayload } | { ok: false; message: string } {
-  if (typeof value !== "object" || value === null) {
-    return { ok: false, message: "Bill data was missing." };
-  }
-  const v = value as Record<string, unknown>;
-
-  const path = typeof v.path === "string" ? v.path : "";
-  if (!path) return { ok: false, message: "No uploaded file path was given." };
-
-  // Both optional -- a bill with no printed provider name or date can still
-  // be confirmed (see computeConfirm below for how a missing one is stored
-  // and displayed).
-  const provider = typeof v.provider === "string" ? v.provider.trim() : "";
-
-  const providerLegalNameRaw = typeof v.provider_legal_name === "string" ? v.provider_legal_name.trim() : "";
-  const provider_legal_name = providerLegalNameRaw || null;
-
-  const bill_date = typeof v.bill_date === "string" ? v.bill_date.trim() : "";
-  if (bill_date && !/^\d{4}-\d{2}-\d{2}$/.test(bill_date)) {
-    return { ok: false, message: "Please enter a valid bill date." };
-  }
-
-  const total = typeof v.total === "number" && Number.isFinite(v.total) ? v.total : null;
-  if (total === null) return { ok: false, message: "Please enter the bill total." };
-
-  const category = BILL_CATEGORIES.includes(v.category as BillCategory) ? (v.category as BillCategory) : null;
-  const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-  const billing_period_start = typeof v.billing_period_start === "string" && DATE_RE.test(v.billing_period_start) ? v.billing_period_start : null;
-  const billing_period_end = typeof v.billing_period_end === "string" && DATE_RE.test(v.billing_period_end) ? v.billing_period_end : null;
-  const units_consumed = typeof v.units_consumed === "number" && Number.isFinite(v.units_consumed) ? v.units_consumed : null;
-  const units_consumed_unit = typeof v.units_consumed_unit === "string" ? v.units_consumed_unit : null;
-  const printed_hsn_codes = Array.isArray(v.printed_hsn_codes)
-    ? v.printed_hsn_codes.filter((c): c is string => typeof c === "string")
-    : [];
-
-  if (!Array.isArray(v.line_items) || v.line_items.length === 0) {
-    return { ok: false, message: "At least one line item is required." };
-  }
-
-  const line_items: BillLine[] = [];
-  for (const raw of v.line_items) {
-    if (typeof raw !== "object" || raw === null) {
-      return { ok: false, message: "A line item was malformed." };
-    }
-    const item = raw as Record<string, unknown>;
-    const label = typeof item.label === "string" ? item.label.trim() : "";
-    const amount = typeof item.amount === "number" && Number.isFinite(item.amount) ? item.amount : null;
-    const role = LINE_ROLES.includes(item.role as BillLine["role"]) ? (item.role as BillLine["role"]) : null;
-    if (!label || amount === null || !role) {
-      return { ok: false, message: "Every line needs a label, amount and role." };
-    }
-    line_items.push({ label, amount, role, unrecognized: item.unrecognized === true });
-  }
-
-  let promise: PromiseInput = null;
-  if (typeof v.promise === "object" && v.promise !== null) {
-    const p = v.promise as Record<string, unknown>;
-    const statement = typeof p.statement === "string" ? p.statement.trim() : "";
-    if (statement) {
-      const promisedAmount =
-        typeof p.promisedAmount === "number" && Number.isFinite(p.promisedAmount) ? p.promisedAmount : null;
-      promise = { statement, promisedAmount };
-    }
-  }
-
-  return {
-    ok: true,
-    data: {
-      path,
-      provider,
-      provider_legal_name,
-      bill_date,
-      total,
-      category,
-      billing_period_start,
-      billing_period_end,
-      units_consumed,
-      units_consumed_unit,
-      printed_hsn_codes,
-      line_items,
-      promise,
-    },
-  };
+  return parseInput(confirmSchema, value);
 }

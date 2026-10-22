@@ -107,6 +107,20 @@ type Stage =
   | { name: "done"; bill: ConfirmedBill; checks: BillChecks; verdict: Verdict }
   | { name: "error"; message: string; notice?: string; retryAfterSeconds?: number; uploadFailed?: boolean };
 
+// Content-type for the storage upload. The bucket only accepts these four
+// types (migration 0012), and some Android pickers leave file.type blank,
+// so fall back to the extension rather than sending octet-stream.
+const EXTENSION_MIME: Record<string, string> = {
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  png: "image/png",
+  webp: "image/webp",
+  pdf: "application/pdf",
+};
+function contentTypeFor(file: File): string {
+  return file.type || EXTENSION_MIME[extensionFor(file).toLowerCase()] || "application/octet-stream";
+}
+
 function extensionFor(file: File): string {
   if (file.type === "application/pdf") return "pdf";
   const fromType = file.type.split("/")[1];
@@ -738,7 +752,7 @@ export default function UploadPage() {
       try {
         const { error } = await supabase.storage
           .from("bills")
-          .upload(path, toUpload, { contentType: toUpload.type || "application/octet-stream", upsert: false });
+          .upload(path, toUpload, { contentType: contentTypeFor(toUpload), upsert: false });
         return { path, error };
       } catch (err) {
         return { path, error: err };

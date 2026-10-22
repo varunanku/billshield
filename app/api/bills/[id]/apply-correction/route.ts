@@ -4,13 +4,13 @@ import { maskPII } from "@/lib/mask";
 import {
   computeBillChecks,
   fromPersistedLines,
-  LINE_ROLES,
   type BillChecks,
   type LineRole,
   type PersistedLine,
 } from "@/lib/bill-checks";
 import { decideVerdict, type Verdict } from "@/lib/verdict";
 import { applyCorrection, type Correction } from "@/lib/followup";
+import { applyCorrectionSchema, idSchema, parseInput } from "@/lib/schemas";
 
 export const maxDuration = 30;
 
@@ -41,6 +41,10 @@ export async function POST(request: Request, routeContext: { params: Promise<{ i
     } = await supabase.auth.getUser();
     if (!user) {
       return json({ success: false, reason: "unauthorized", message: "Please sign in first." }, 401);
+    }
+
+    if (!idSchema.safeParse(billId).success) {
+      return json({ success: false, reason: "bad_request", message: "That ID isn't valid." }, 400);
     }
 
     const parsed = await request.json().catch(() => null);
@@ -178,23 +182,5 @@ export async function POST(request: Request, routeContext: { params: Promise<{ i
 }
 
 function validatePayload(value: unknown): { ok: true; data: { correction: Correction } } | { ok: false; message: string } {
-  if (typeof value !== "object" || value === null) return { ok: false, message: "Request body was missing." };
-  const v = value as Record<string, unknown>;
-  if (typeof v.correction !== "object" || v.correction === null) return { ok: false, message: "Missing correction." };
-  const c = v.correction as Record<string, unknown>;
-
-  const field = c.field;
-  if (field !== "provider" && field !== "bill_date" && field !== "printed_total" && field !== "line") {
-    return { ok: false, message: "Invalid correction field." };
-  }
-  const line_index = typeof c.line_index === "number" ? c.line_index : null;
-  if (field === "line" && line_index === null) {
-    return { ok: false, message: "A line correction needs a line_index." };
-  }
-  const new_label = typeof c.new_label === "string" ? c.new_label : null;
-  const new_role = LINE_ROLES.includes(c.new_role as LineRole) ? (c.new_role as LineRole) : null;
-  const new_amount = typeof c.new_amount === "number" && Number.isFinite(c.new_amount) ? c.new_amount : null;
-  const reason = typeof c.reason === "string" ? c.reason : "";
-
-  return { ok: true, data: { correction: { field, line_index, new_label, new_role, new_amount, reason } } };
+  return parseInput(applyCorrectionSchema, value);
 }

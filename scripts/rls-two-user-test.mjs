@@ -52,7 +52,11 @@ const emailB = `rls-test-b-${stamp}@example.com`;
 let userA, userB, clientA, clientB, anonClient;
 let billA, lineItemA, promiseA, messageA, billB, metricA, eventA;
 const filePathA = (name) => `${userA.id}/${name}`;
-const TEST_FILE_NAME = `rls-test-${stamp}.txt`;
+const TEST_FILE_NAME = `rls-test-${stamp}.pdf`;
+// The bills bucket only accepts bill file types (migration 0012), so every
+// test upload is sent as a PDF -- a rejected upload then proves RLS, not
+// the type filter.
+const PDF = { contentType: "application/pdf" };
 
 async function signIn(email) {
   const c = createClient(url, anonKey, { auth: { autoRefreshToken: false, persistSession: false } });
@@ -141,8 +145,8 @@ async function setup() {
   metricA = metricRes.data;
   check("setup: user A can insert a bill_metrics row on own bill", true);
 
-  const uploadRes = await clientA.storage.from("bills").upload(filePathA(TEST_FILE_NAME), "rls test file contents", {
-    contentType: "text/plain",
+  const uploadRes = await clientA.storage.from("bills").upload(filePathA(TEST_FILE_NAME), "%PDF-1.4 rls test file", {
+    ...PDF,
     upsert: true,
   });
   if (uploadRes.error) throw uploadRes.error;
@@ -205,7 +209,7 @@ async function dataChecks() {
       provider_name: "B's own provider",
       bill_date: "2026-10-01",
       total_amount: 10,
-      file_path: `${userB.id}/placeholder.txt`,
+      file_path: `${userB.id}/placeholder.pdf`,
     })
     .select()
     .single();
@@ -294,7 +298,7 @@ async function storageChecks() {
   const list = await clientB.storage.from("bills").list(userA.id);
   check("user B cannot list A's folder", denied({ data: list.data ?? null, error: list.error }));
 
-  const overwrite = await clientB.storage.from("bills").upload(pathA, "overwritten by B", { upsert: true });
+  const overwrite = await clientB.storage.from("bills").upload(pathA, "%PDF-1.4 overwritten by B", { ...PDF, upsert: true });
   check("user B cannot overwrite A's file", !!overwrite.error);
 
   const remove = await clientB.storage.from("bills").remove([pathA]);
@@ -304,8 +308,8 @@ async function storageChecks() {
     !!remove.error || (!stillThereAfterDelete.error && stillThereAfterDelete.data != null)
   );
 
-  const evilPath = filePathA(`evil-${stamp}.txt`);
-  const uploadNew = await clientB.storage.from("bills").upload(evilPath, "evil", { upsert: false });
+  const evilPath = filePathA(`evil-${stamp}.pdf`);
+  const uploadNew = await clientB.storage.from("bills").upload(evilPath, "%PDF-1.4 evil", { ...PDF, upsert: false });
   check("user B cannot upload into A's folder", !!uploadNew.error);
 }
 

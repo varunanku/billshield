@@ -6,6 +6,8 @@ import { pdfToPngImages } from "@/lib/pdf-to-images";
 import { extractBillFromImages as extractWithGroq, type ExtractedBill, type ImageInput } from "@/lib/groq";
 import { extractBillFromImages as extractWithOpenRouter } from "@/lib/openrouter";
 import { USE_GROQ } from "@/lib/provider";
+import { extractSchema, parseInput } from "@/lib/schemas";
+import { sniffFileType } from "@/lib/file-type";
 
 const extractBillFromImages = USE_GROQ ? extractWithGroq : extractWithOpenRouter;
 
@@ -45,11 +47,11 @@ export async function POST(request: Request) {
     return json({ success: false, reason: "unauthorized", message: "Please sign in first." }, 401);
   }
 
-  const body = await request.json().catch(() => null);
-  const path = body?.path;
-  if (typeof path !== "string" || !path) {
-    return json({ success: false, reason: "bad_request", message: "No uploaded file path was given." }, 400);
+  const validated = parseInput(extractSchema, await request.json().catch(() => null));
+  if (!validated.ok) {
+    return json({ success: false, reason: "bad_request", message: validated.message }, 400);
   }
+  const { path } = validated.data;
 
   // The service role client below bypasses storage RLS entirely, so this
   // ownership check is standing in for what RLS would otherwise enforce --
@@ -74,30 +76,14 @@ export async function POST(request: Request) {
     return json({ success: false, reason: "bad_request", message: "That file is too large (max 20MB)." }, 400);
   }
 
-  // Trust the blob's stored content-type (set by the browser at upload
-  // time) over the path extension, falling back to the extension only if
-  // the content-type came back generic/missing. isValidOwnedPath already
-  // restricted path to one of these four extensions, so the fallback map
-  // only needs to cover them.
-  const EXTENSION_MIME: Record<string, string> = {
-    jpg: "image/jpeg",
-    jpeg: "image/jpeg",
-    png: "image/png",
-    webp: "image/webp",
-    pdf: "application/pdf",
-  };
-  const pathExt = path.toLowerCase().split(".").pop() ?? "";
-  let mimeType = fileBlob.type;
-  if (!mimeType || mimeType === "application/octet-stream") {
-    mimeType = EXTENSION_MIME[pathExt] ?? "image/jpeg";
-  }
-  const isPdf = mimeType === "application/pdf" || pathExt === "pdf";
-  const isImage = mimeType.startsWith("image/");
-  if (!isPdf && !isImage) {
+  // Decide the type from the file's own first bytes, not the content-type
+  // the browser attached at upload time (which a client can set to anything).
+  const bytes = Buffer.from(await fileBlob.arrayBuffer());
+  const mimeType = sniffFileType(bytes);
+  if (!mimeType) {
     return json({ success: false, reason: "bad_request", message: "Please upload a JPEG, PNG, WEBP or PDF." }, 400);
   }
-
-  const bytes = Buffer.from(await fileBlob.arrayBuffer());
+  const isPdf = mimeType === "application/pdf";
 
   let images: ImageInput[];
   let notice: string | null = null;

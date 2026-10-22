@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { draftEmail, applySignature, TONE_PRESETS, type Tone, type TonePreset } from "@/lib/email-draft";
+import { draftEmail, applySignature, type Tone, type TonePreset } from "@/lib/email-draft";
 import type { Facts } from "@/lib/verdict";
+import { draftEmailSchema, parseInput } from "@/lib/schemas";
 
 export const maxDuration = 30;
 
@@ -125,9 +126,7 @@ export async function POST(request: Request) {
   return json({ success: true, messageId: message.id, subject: draft.subject, body: draft.body, isDefaultTone }, 200);
 }
 
-function validatePayload(
-  value: unknown
-):
+function validatePayload(value: unknown):
   | {
       ok: true;
       data: {
@@ -138,87 +137,7 @@ function validatePayload(
       };
     }
   | { ok: false; message: string } {
-  if (typeof value !== "object" || value === null) return { ok: false, message: "Request body was missing." };
-  const v = value as Record<string, unknown>;
-
-  const billId = typeof v.billId === "string" ? v.billId : "";
-  if (!billId) return { ok: false, message: "No bill id was given." };
-
-  const outcome =
-    v.outcome === "confirmed_error" || v.outcome === "cannot_verify" || v.outcome === "unexplained" ? v.outcome : null;
-  if (!outcome) return { ok: false, message: "Invalid outcome." };
-
-  const tonePreset = TONE_PRESETS.includes(v.tonePreset as TonePreset) ? (v.tonePreset as TonePreset) : null;
-
-  if (typeof v.facts !== "object" || v.facts === null) return { ok: false, message: "Missing facts." };
-  const f = v.facts as Record<string, unknown>;
-
-  const provider = typeof f.provider === "string" ? f.provider : "";
-  const billDate = typeof f.billDate === "string" ? f.billDate : "";
-  const gap = typeof f.gap === "number" && Number.isFinite(f.gap) ? f.gap : null;
-  const billedAmount = typeof f.billedAmount === "number" && Number.isFinite(f.billedAmount) ? f.billedAmount : null;
-  const total = typeof f.total === "number" && Number.isFinite(f.total) ? f.total : null;
-  if (!provider || !billDate || gap === null || billedAmount === null || total === null) {
-    return { ok: false, message: "Facts were incomplete." };
-  }
-  const promisedAmount =
-    typeof f.promisedAmount === "number" && Number.isFinite(f.promisedAmount) ? f.promisedAmount : null;
-  const reconcilingBalanceLabel = typeof f.reconcilingBalanceLabel === "string" ? f.reconcilingBalanceLabel : null;
-
-  const disputedLines: { label: string; amount: number }[] = [];
-  if (Array.isArray(f.disputedLines)) {
-    for (const raw of f.disputedLines) {
-      if (typeof raw !== "object" || raw === null) continue;
-      const line = raw as Record<string, unknown>;
-      if (typeof line.label === "string" && typeof line.amount === "number" && Number.isFinite(line.amount)) {
-        disputedLines.push({ label: line.label, amount: line.amount });
-      }
-    }
-  }
-
-  // Set only for reason "tax_overcharge" (lib/verdict.ts) -- every other
-  // outcome/reason sends null, same as decideVerdict's own baseFacts.
-  let taxFinding: Facts["taxFinding"] = null;
-  if (typeof f.taxFinding === "object" && f.taxFinding !== null) {
-    const tf = f.taxFinding as Record<string, unknown>;
-    const effectiveRatePercent = typeof tf.effectiveRatePercent === "number" ? tf.effectiveRatePercent : null;
-    const expectedRatePercent = typeof tf.expectedRatePercent === "number" ? tf.expectedRatePercent : null;
-    if (effectiveRatePercent !== null && expectedRatePercent !== null) {
-      taxFinding = {
-        effectiveRatePercent,
-        expectedRatePercent,
-        hsnPrefix: typeof tf.hsnPrefix === "string" ? tf.hsnPrefix : null,
-        sourceUrl: typeof tf.sourceUrl === "string" ? tf.sourceUrl : null,
-      };
-    }
-  }
-
-  // Set only for reason "promise_mismatch" (lib/verdict.ts).
-  let expectedAmountGap: Facts["expectedAmountGap"] = null;
-  if (typeof f.expectedAmountGap === "object" && f.expectedAmountGap !== null) {
-    const eg = f.expectedAmountGap as Record<string, unknown>;
-    expectedAmountGap = { matchedLineLabel: typeof eg.matchedLineLabel === "string" ? eg.matchedLineLabel : null };
-  }
-
-  return {
-    ok: true,
-    data: {
-      billId,
-      outcome,
-      facts: {
-        provider,
-        billDate,
-        billReference: null,
-        disputedLines,
-        gap,
-        promisedAmount,
-        billedAmount,
-        total,
-        reconcilingBalanceLabel,
-        taxFinding,
-        expectedAmountGap,
-      },
-      tonePreset,
-    },
-  };
+  const parsed = parseInput(draftEmailSchema, value);
+  if (!parsed.ok) return parsed;
+  return { ok: true, data: { ...parsed.data, facts: { ...parsed.data.facts, billReference: null } } };
 }

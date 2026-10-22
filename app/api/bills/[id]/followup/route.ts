@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { LINE_ROLES, type LineRole } from "@/lib/bill-checks";
+import { followupSchema, idSchema, parseInput } from "@/lib/schemas";
 import {
   buildFollowupSystemPrompt,
   parseFollowupReply,
@@ -61,6 +61,10 @@ export async function POST(request: Request, routeContext: { params: Promise<{ i
 
     if (!user) {
       return json({ success: false, reason: "unauthorized", message: "Please sign in first." }, 401);
+    }
+
+    if (!idSchema.safeParse(billId).success) {
+      return json({ success: false, reason: "bad_request", message: "That ID isn't valid." }, 400);
     }
 
     const parsed = await request.json().catch(() => null);
@@ -220,79 +224,5 @@ export async function POST(request: Request, routeContext: { params: Promise<{ i
 function validatePayload(
   value: unknown
 ): { ok: true; data: { question: string; context: FollowupBillContext } } | { ok: false; message: string } {
-  if (typeof value !== "object" || value === null) return { ok: false, message: "Request body was missing." };
-  const v = value as Record<string, unknown>;
-
-  const question = typeof v.question === "string" ? v.question.trim() : "";
-  if (!question) return { ok: false, message: "No question was given." };
-  if (question.length > 1000) return { ok: false, message: "That question is too long." };
-
-  if (typeof v.context !== "object" || v.context === null) return { ok: false, message: "Missing bill context." };
-  const c = v.context as Record<string, unknown>;
-
-  const provider = typeof c.provider === "string" ? c.provider : null;
-  const billDate = typeof c.billDate === "string" ? c.billDate : null;
-  const total = typeof c.total === "number" && Number.isFinite(c.total) ? c.total : null;
-  if (total === null) return { ok: false, message: "Bill context was incomplete." };
-
-  const VERDICT_OUTCOMES = ["clean", "confirmed_error", "cannot_verify", "unexplained"];
-  const verdictOutcome = VERDICT_OUTCOMES.includes(c.verdictOutcome as string)
-    ? (c.verdictOutcome as FollowupBillContext["verdictOutcome"])
-    : null;
-  if (!verdictOutcome) return { ok: false, message: "Bill context was incomplete." };
-
-  const verdictGap =
-    typeof c.verdictGap === "number" && Number.isFinite(c.verdictGap) ? c.verdictGap : null;
-
-  const lineItems: { label: string; amount: number; role: LineRole }[] = [];
-  if (Array.isArray(c.lineItems)) {
-    for (const raw of c.lineItems) {
-      if (typeof raw !== "object" || raw === null) continue;
-      const li = raw as Record<string, unknown>;
-      if (
-        typeof li.label === "string" &&
-        typeof li.amount === "number" &&
-        Number.isFinite(li.amount) &&
-        LINE_ROLES.includes(li.role as LineRole)
-      ) {
-        lineItems.push({ label: li.label, amount: li.amount, role: li.role as LineRole });
-      }
-    }
-  }
-
-  const disputedLines: { label: string; amount: number }[] = [];
-  if (Array.isArray(c.disputedLines)) {
-    for (const raw of c.disputedLines) {
-      if (typeof raw !== "object" || raw === null) continue;
-      const line = raw as Record<string, unknown>;
-      if (typeof line.label === "string" && typeof line.amount === "number" && Number.isFinite(line.amount)) {
-        disputedLines.push({ label: line.label, amount: line.amount });
-      }
-    }
-  }
-
-  const warnings = Array.isArray(c.warnings) ? c.warnings.filter((w): w is string => typeof w === "string") : [];
-  const printedHsnCodes = Array.isArray(c.printedHsnCodes)
-    ? c.printedHsnCodes.filter((code): code is string => typeof code === "string")
-    : [];
-  const taxTotal = typeof c.taxTotal === "number" && Number.isFinite(c.taxTotal) ? c.taxTotal : 0;
-
-  let expectedAmount: FollowupBillContext["expectedAmount"] = null;
-  if (typeof c.expectedAmount === "object" && c.expectedAmount !== null) {
-    const ea = c.expectedAmount as Record<string, unknown>;
-    if (typeof ea.promisedAmount === "number" && Number.isFinite(ea.promisedAmount)) {
-      expectedAmount = {
-        promisedAmount: ea.promisedAmount,
-        matchedLineLabel: typeof ea.matchedLineLabel === "string" ? ea.matchedLineLabel : null,
-      };
-    }
-  }
-
-  return {
-    ok: true,
-    data: {
-      question,
-      context: { provider, billDate, total, lineItems, verdictOutcome, verdictGap, disputedLines, warnings, printedHsnCodes, taxTotal, expectedAmount },
-    },
-  };
+  return parseInput(followupSchema, value);
 }

@@ -1,14 +1,13 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { draftKeptPct, originalDraftBody } from "@/lib/draft-kept";
+import { idSchema, messageActionSchema, parseInput } from "@/lib/schemas";
 
 type ApiResponse = { success: true } | { success: false; reason: "bad_request" | "unauthorized" | "server_error"; message: string };
 
 function json(body: ApiResponse, status: number) {
   return NextResponse.json(body, { status });
 }
-
-const ACTION_VALUES = ["sent_as_is", "sent_with_tone_preset", "sent_manually_edited", "not_sent"];
 
 // Records what the user actually did with a drafted message -- "I've sent
 // it" -- plus final_body when the sent text differs from what was first
@@ -25,15 +24,15 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     return json({ success: false, reason: "unauthorized", message: "Please sign in first." }, 401);
   }
 
-  const body = await request.json().catch(() => null);
-  if (typeof body !== "object" || body === null) {
-    return json({ success: false, reason: "bad_request", message: "Request body was missing." }, 400);
+  if (!idSchema.safeParse(id).success) {
+    return json({ success: false, reason: "bad_request", message: "That ID isn't valid." }, 400);
   }
-  const actionTaken = typeof body.action_taken === "string" ? body.action_taken : null;
-  if (!actionTaken || !ACTION_VALUES.includes(actionTaken)) {
-    return json({ success: false, reason: "bad_request", message: "Invalid action." }, 400);
+  const validated = parseInput(messageActionSchema, await request.json().catch(() => null));
+  if (!validated.ok) {
+    return json({ success: false, reason: "bad_request", message: validated.message }, 400);
   }
-  const finalBody = typeof body.final_body === "string" ? body.final_body : undefined;
+  const actionTaken = validated.data.action_taken;
+  const finalBody = validated.data.final_body;
 
   const updates: Record<string, string | boolean> = { action_taken: actionTaken };
   if (finalBody !== undefined) {
