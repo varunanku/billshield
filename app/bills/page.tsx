@@ -194,6 +194,7 @@ export default function BillsPage() {
           ← Back
         </Link>
       </div>
+      <p className="-mt-4 mb-6 text-sm text-text-muted">Your checked bills, grouped by provider. Go back to check another.</p>
       <Suspense fallback={<p className="text-text-muted">Loading...</p>}>
         <BillsList />
       </Suspense>

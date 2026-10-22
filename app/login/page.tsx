@@ -98,6 +98,9 @@ export default function LoginPage() {
               </svg>
               <h1 className="font-serif text-3xl font-semibold">BillShield</h1>
               <p className="text-text-muted">Check your bill before you pay it.</p>
+              <p className="text-sm text-text-muted">
+                {mode === "signin" ? "Sign in to check a bill." : "Create an account to check your first bill."}
+              </p>
             </div>
 
             <p className="text-center text-sm text-text-muted">

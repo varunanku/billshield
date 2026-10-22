@@ -15,7 +15,7 @@ import {
   type Checkpoint,
   type BillCategory,
 } from "@/lib/bill-checks";
-import { shouldDraftEmail, expectedAmountHeadline, type Verdict } from "@/lib/verdict";
+import { shouldDraftEmail, expectedAmountHeadline, decideVerdict, type Verdict } from "@/lib/verdict";
 import {
   MAX_FOLLOWUP_MESSAGES,
   disputedLinesForChat,
@@ -23,7 +23,11 @@ import {
   type FollowupReply,
   type Correction,
 } from "@/lib/followup";
-import type { TonePreset } from "@/lib/email-draft";
+// templateEmail is pure (fixed wording + fact numbers); only the sample
+// bill uses it client-side. No key is involved: the AI call in that module
+// is server-only and never reached from here.
+import { templateEmail, type TonePreset } from "@/lib/email-draft";
+import { SAMPLE_BILL, SAMPLE_BILL_ID } from "@/lib/sample-bill";
 import { isSuspiciousBillDate } from "@/lib/date-check";
 import { computeTaxBreakdown, summarizeTaxBreakdown, computeEffectiveTaxRates, type CategoryRate } from "@/lib/gst";
 import { ThemeSwitcher } from "@/app/theme-switcher";
@@ -187,6 +191,43 @@ function verdictDraftsEmail(verdict: Verdict): boolean {
   return shouldDraftEmail(verdict.facts);
 }
 
+// First-visit guidance: a dismissible three-step strip, remembered in this
+// browser only (a convenience -- if storage is blocked it just shows again).
+const GUIDE_DISMISSED_KEY = "billshield-guide-dismissed";
+function GuideStrip() {
+  const [show, setShow] = useState(false);
+  useEffect(() => {
+    // Resolved asynchronously, never a direct setState in the effect body.
+    Promise.resolve().then(() => {
+      try {
+        setShow(localStorage.getItem(GUIDE_DISMISSED_KEY) !== "1");
+      } catch {
+        setShow(true);
+      }
+    });
+  }, []);
+  if (!show) return null;
+  function dismiss() {
+    setShow(false);
+    try {
+      localStorage.setItem(GUIDE_DISMISSED_KEY, "1");
+    } catch {
+      // Storage blocked -- it'll just show again next visit.
+    }
+  }
+  return (
+    <div className="mb-3 flex items-start justify-between gap-3 rounded-md bg-accent-soft px-3 py-2 text-sm text-accent">
+      <p>
+        <strong>1.</strong> Upload a bill &nbsp; <strong>2.</strong> Check what we read &nbsp; <strong>3.</strong> Get a
+        verdict — and an email if something&apos;s off.
+      </p>
+      <button type="button" onClick={dismiss} aria-label="Dismiss" className="shrink-0 hover:opacity-70">
+        ✕
+      </button>
+    </div>
+  );
+}
+
 // Upload -> Review -> Verdict. A minimal 3-dot/line stepper, not shown on
 // the error screen (which has its own message + action).
 function ProgressSteps({ current }: { current: 1 | 2 | 3 }) {
@@ -344,7 +385,7 @@ function CheckpointStamp({
   }
   return (
     <span className="inline-flex flex-wrap items-center gap-1.5 rounded-full bg-warning-soft px-2 py-0.5 text-xs font-medium text-warning">
-      ! check -- gap {money(checkpoint.gap)}
+      ! subtotal off by {money(Math.abs(checkpoint.gap))}
       {checkpoint.suggestion && onRemoveSuggestion && (
         <button
           type="button"
@@ -456,6 +497,10 @@ export default function UploadPage() {
   const supabase = createClient();
   const [file, setFile] = useState<File | null>(null);
   const [isDraggingOver, setIsDraggingOver] = useState(false);
+  // "Try a sample bill": the built-in example runs through the same review
+  // screen, checks and verdict code, but nothing is uploaded, saved, or sent
+  // to the AI -- the email is the code-built template, and chat is off.
+  const [isSample, setIsSample] = useState(false);
   const [uploadedPath, setUploadedPath] = useState<string | null>(null);
   const [stage, setStage] = useState<Stage>({ name: "upload" });
   const [isConfirming, setIsConfirming] = useState(false);
@@ -726,6 +771,29 @@ export default function UploadPage() {
     }
   }
 
+  function startSample() {
+    setIsSample(true);
+    setFile(null);
+    setUploadedPath(null);
+    setProvider(SAMPLE_BILL.provider ?? "");
+    setProviderLegalName(SAMPLE_BILL.provider_legal_name);
+    setExtraFields({
+      category: SAMPLE_BILL.category,
+      billing_period_start: SAMPLE_BILL.billing_period_start,
+      billing_period_end: SAMPLE_BILL.billing_period_end,
+      units_consumed: SAMPLE_BILL.units_consumed,
+      units_consumed_unit: SAMPLE_BILL.units_consumed_unit,
+    });
+    setPrintedHsnCodes(SAMPLE_BILL.printed_hsn_codes);
+    setPrintedHistory(SAMPLE_BILL.printed_history);
+    setBillDate(SAMPLE_BILL.bill_date ?? "");
+    setTotal(String(SAMPLE_BILL.total));
+    setLines(SAMPLE_BILL.line_items.map((li) => ({ label: li.label, amount: String(li.amount), role: li.role })));
+    setEditingField(null);
+    setShowAddLine(false);
+    setStage({ name: "reviewing", notice: "This is a sample bill. Nothing is uploaded or saved -- try editing it." });
+  }
+
   async function handleUpload(e?: React.FormEvent) {
     e?.preventDefault();
     if (!file) return;
@@ -795,14 +863,52 @@ export default function UploadPage() {
     await runExtraction(uploadedPath);
   }
 
+  function showVerdict(bill: ConfirmedBill, checks: BillChecks, verdict: Verdict) {
+    setEmailDraft(null);
+    setEmailError(null);
+    setEmailActionTaken(null);
+    setTonePreset("");
+    setShowThankYou(false);
+    draftRequestedRef.current = false;
+    setChatMessages([]);
+    setChatInput("");
+    setChatError(null);
+    setChatLimitReached(false);
+    setChatBusyRetrying(false);
+    setApplyingCorrection(false);
+    setIsConfirming(false);
+    setStage({ name: "done", bill, checks, verdict });
+  }
+
   async function handleConfirm() {
-    if (!uploadedPath || !canConfirm) return;
+    if ((!uploadedPath && !isSample) || !canConfirm) return;
     setIsConfirming(true);
 
     const promisedAmountValue = parseAmountInput(promiseAmount);
     const promise = promiseStatement.trim()
       ? { statement: promiseStatement.trim(), promisedAmount: promisedAmountValue }
       : null;
+
+    // Sample bill: the same checks and verdict code the server runs, here
+    // in the browser, and the code-built email -- no upload, no save, no AI.
+    if (isSample) {
+      const sampleProvider = provider.trim() || "your provider";
+      const sampleDate = billDate || new Date().toISOString().slice(0, 10);
+      const checks = computeBillChecks(parsedLines, parsedTotal);
+      const verdict = decideVerdict({ lines: parsedLines, total: parsedTotal, provider: sampleProvider, billDate: sampleDate, checks, promise });
+      showVerdict(
+        { id: SAMPLE_BILL_ID, provider: sampleProvider, providerLegalName, billDate: sampleDate, total: parsedTotal, lineItems: parsedLines },
+        checks,
+        verdict
+      );
+      if (verdict.outcome !== "clean" && shouldDraftEmail(verdict.facts)) {
+        const tone = verdict.outcome === "confirmed_error" && verdict.tone === "confident" ? "confident" : "inquiry";
+        const draft = templateEmail(verdict.facts, tone);
+        draftRequestedRef.current = true;
+        setEmailDraft({ messageId: SAMPLE_BILL_ID, subject: draft.subject, body: draft.body, originalBody: draft.body, isDefaultTone: true });
+      }
+      return;
+    }
 
     try {
       const res = await fetch("/api/bills/confirm", {
@@ -828,20 +934,7 @@ export default function UploadPage() {
         setStage({ name: "error", message: data.message });
         return;
       }
-      setEmailDraft(null);
-      setEmailError(null);
-      setEmailActionTaken(null);
-      setTonePreset("");
-      setShowThankYou(false);
-      draftRequestedRef.current = false;
-      setChatMessages([]);
-      setChatInput("");
-      setChatError(null);
-      setChatLimitReached(false);
-      setChatBusyRetrying(false);
-      setApplyingCorrection(false);
-      setIsConfirming(false);
-      setStage({ name: "done", bill: data.bill, checks: data.checks, verdict: data.verdict });
+      showVerdict(data.bill, data.checks, data.verdict);
     } catch {
       setIsConfirming(false);
       setStage({ name: "error", message: "Couldn't reach the server. Check your connection and try again." });
@@ -862,6 +955,7 @@ export default function UploadPage() {
   }
 
   function startOver() {
+    setIsSample(false);
     setFile(null);
     setUploadedPath(null);
     setProvider("");
@@ -1024,7 +1118,7 @@ export default function UploadPage() {
   // delays the button's own action, and every failure is swallowed. The
   // server computes draft_kept_pct from the editor text sent here.
   function recordMessageEvent(eventType: "copied" | "opened_email_app" | "marked_sent") {
-    if (!emailDraft) return;
+    if (!emailDraft || isSample) return;
     fetch(`/api/messages/${emailDraft.messageId}/events`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1302,6 +1396,8 @@ export default function UploadPage() {
 
       {stage.name === "upload" && (
         <>
+          <GuideStrip />
+          <p className="mb-2 text-sm text-text-muted">Upload a photo or PDF of your bill to check it.</p>
           <p className="mb-3 rounded-md bg-warning-soft px-3 py-2 text-sm text-warning">
             Your bill is read by BillShield&apos;s AI assistant to pull out the line items. Please mask your name,
             address, phone number and any other sensitive details before uploading -- BillShield also runs an
@@ -1350,6 +1446,9 @@ export default function UploadPage() {
             </label>
             <button type="submit" disabled={!file} className={buttonPrimary}>
               Upload
+            </button>
+            <button type="button" onClick={startSample} className={`${buttonSecondary} self-center`}>
+              Try a sample bill
             </button>
           </form>
         </>
@@ -1443,7 +1542,7 @@ export default function UploadPage() {
 
           <div className="flex items-center gap-1.5">
             <span className="text-sm font-bold text-text-muted">Line items</span>
-            <InfoTooltip text="The AI only reads the text off your bill. Every sum, checkpoint and the final verdict are calculated by BillShield's checks, never by the AI." />
+            <InfoTooltip text="The AI only reads the text off your bill. Every sum, subtotal check and the final verdict are calculated by BillShield's checks, never by the AI. The coloured tag on each line says what kind it is: a charge, tax, discount, payment and so on." />
           </div>
           <div className="flex flex-col divide-y divide-border">
             {lines.map((line, i) => {
@@ -1625,6 +1724,11 @@ export default function UploadPage() {
           <button type="button" onClick={backToReview} className="self-start text-sm text-text-muted transition-colors hover:text-text">
             ← Back to review
           </button>
+          <p className="text-sm text-text-muted">
+            {isSample
+              ? "This is the sample's verdict. Upload your own bill to check it."
+              : "Read the verdict, then send the email or ask a question below."}
+          </p>
 
           {stage.verdict.outcome === "clean" && (
             <div className="flex items-start gap-3 rounded-lg border-l-4 border-success bg-success-soft p-5 text-success animate-fade-up">
@@ -1632,7 +1736,7 @@ export default function UploadPage() {
               <div>
                 <p className="text-[28px] font-bold leading-tight">Your bill checks out.</p>
                 <p className="mt-1 text-text">
-                  Reconciled total: <span className="font-mono tabular-nums font-medium">{money(stage.verdict.reconciledTotal)}</span>
+                  Total that adds up: <span className="font-mono tabular-nums font-medium">{money(stage.verdict.reconciledTotal)}</span>
                 </p>
                 {stage.verdict.roundingNote && (
                   <p className="mt-1 text-sm text-text-muted">
@@ -1667,9 +1771,9 @@ export default function UploadPage() {
                   {stage.verdict.reason === "overpaid"
                     ? `You overpaid Rs ${money(Math.abs(stage.verdict.facts.gap))}.`
                     : stage.verdict.reason === "tax_overcharge" && stage.verdict.facts.taxFinding
-                    ? `The tax rate on this bill (${stage.verdict.facts.taxFinding.effectiveRatePercent.toFixed(2)}%) is higher than the rate listed for HSN ${
+                    ? `The tax rate on this bill (${stage.verdict.facts.taxFinding.effectiveRatePercent.toFixed(2)}%) is higher than the rate listed for this item's tax code (HSN ${
                         stage.verdict.facts.taxFinding.hsnPrefix ?? "?"
-                      } (${stage.verdict.facts.taxFinding.expectedRatePercent}%).`
+                      }) (${stage.verdict.facts.taxFinding.expectedRatePercent}%).`
                     : `Rs ${money(Math.abs(stage.verdict.facts.gap))} on this bill doesn't add up.`}
                 </p>
                 {stage.verdict.reason === "tax_overcharge" && stage.verdict.facts.taxFinding ? (
@@ -1793,16 +1897,20 @@ export default function UploadPage() {
                     <button type="button" onClick={handleCopyEmail} className={`${buttonSecondary} w-full sm:w-auto`}>
                       Copy
                     </button>
-                    <button
-                      type="button"
-                      onClick={handleMarkSent}
-                      disabled={emailActionTaken !== null}
-                      className={`${buttonSuccess} w-full sm:w-auto`}
-                    >
-                      {emailActionTaken ? "Marked as sent" : "I've sent it"}
-                    </button>
+                    {!isSample && (
+                      <button
+                        type="button"
+                        onClick={handleMarkSent}
+                        disabled={emailActionTaken !== null}
+                        className={`${buttonSuccess} w-full sm:w-auto`}
+                      >
+                        {emailActionTaken ? "Marked as sent" : "I've sent it"}
+                      </button>
+                    )}
                   </div>
 
+                  {!isSample && (
+                  <>
                   <div className="flex flex-wrap items-center gap-2 border-t border-border pt-3">
                     <label className="flex items-center gap-2 text-sm">
                       Tone
@@ -1834,6 +1942,8 @@ export default function UploadPage() {
                     that style. The facts and amounts stay exactly the same -- they come from BillShield&apos;s
                     checks, not the AI.
                   </p>
+                  </>
+                  )}
                 </div>
               )}
             </div>
@@ -1845,11 +1955,19 @@ export default function UploadPage() {
               email card above). */}
           {verdictDraftsEmail(stage.verdict) && emailDraft && (
             <p className="text-sm text-text-muted">
-              This message was drafted by AI from BillShield&apos;s checks. Check it matches your paper bill before
-              sending.
+              {isSample
+                ? "This sample email was written by BillShield's checks, not the AI. Nothing is sent or saved."
+                : "This message was drafted by AI from BillShield's checks. Check it matches your paper bill before sending."}
             </p>
           )}
 
+          {isSample ? (
+            <div className={card}>
+              <p className="text-sm text-text-muted">
+                The AI assistant answers questions about your own saved bills. Upload one to try it.
+              </p>
+            </div>
+          ) : (
           <div className={card}>
             <p className="mb-1 flex items-center gap-1.5 font-bold">
               {userFullName ? `${userFullName.trim().split(/\s+/)[0]}, ask BillShield's AI assistant` : "Ask BillShield's AI assistant"}
@@ -1978,6 +2096,7 @@ export default function UploadPage() {
               BillShield&apos;s checks, not the AI.
             </p>
           </div>
+          )}
 
           <button onClick={startOver} className={`${buttonSecondary} self-start`}>
             Upload another bill
