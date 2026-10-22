@@ -4,6 +4,7 @@
 // says so, and allNumbersAreFacts checks the actual output afterwards.
 // GROQ_API_KEY never reaches the browser; only imported from Route Handlers.
 import type { Facts } from "./verdict.ts";
+import { UNTRUSTED_NOTICE, q } from "./untrusted.ts";
 
 const EMAIL_MODEL = "qwen/qwen3.8-27b";
 const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
@@ -123,13 +124,16 @@ function isUnpinpointedGap(facts: Facts): boolean {
 export function buildPrompt(facts: Facts, tone: Tone, preset: TonePreset | null): string {
   const lineText =
     facts.disputedLines.length > 0
-      ? facts.disputedLines.map((l) => `- ${l.label}: Rs ${l.amount.toFixed(2)}`).join("\n")
+      ? facts.disputedLines.map((l) => `- ${q(l.label)}: Rs ${l.amount.toFixed(2)}`).join("\n")
       : "(no single line identified -- write generally about the billed total)";
 
   return `Write a short, polite email to a service provider about a billing question. Use ONLY the facts listed below. Never state, compute, infer, or round any amount that is not explicitly given here -- if you need a number, it must be one of these exact figures. Never refer to any figure as "the total" except the one explicitly labelled "Printed total" below -- do not call the billed amount, the difference, or any other figure "the total".
 
-Provider: ${facts.provider}
-Bill date: ${facts.billDate}
+${UNTRUSTED_NOTICE}
+
+<bill_data>
+Provider: ${q(facts.provider)}
+Bill date: ${q(facts.billDate)}
 Printed total: Rs ${facts.total.toFixed(2)}
 ${facts.expectedAmountGap ? "" : `Billed amount (as reconciled by the user): Rs ${facts.billedAmount.toFixed(2)}\n`}${facts.promisedAmount !== null ? `Promised amount: Rs ${facts.promisedAmount.toFixed(2)}\n` : ""}Disputed line(s):
 ${lineText}
@@ -137,15 +141,16 @@ ${
     facts.expectedAmountGap
       ? `Difference: Rs ${Math.abs(facts.gap).toFixed(2)} -- the printed total is this much ${facts.gap >= 0 ? "higher" : "lower"} than the amount the user expected to pay. This is NOT a confirmed error.\n${
           facts.expectedAmountGap.matchedLineLabel
-            ? `The line labelled "${facts.expectedAmountGap.matchedLineLabel}" on the bill matches this difference -- name that line and ask whether it applies, but do not state its amount.\n`
+            ? `The line labelled ${q(facts.expectedAmountGap.matchedLineLabel)} on the bill matches this difference -- name that line and ask whether it applies, but do not state its amount.\n`
             : ""
         }`
       : `Difference: Rs ${Math.abs(facts.gap).toFixed(2)} (${facts.gap >= 0 ? "the user appears to have been undercharged or owes more" : "the user appears to have overpaid"})\n`
-  }${facts.reconcilingBalanceLabel ? `Note: a line labelled "${facts.reconcilingBalanceLabel}" on the bill matches this difference exactly -- mention it as confirming the excess.\n` : ""}${
+  }${facts.reconcilingBalanceLabel ? `Note: a line labelled ${q(facts.reconcilingBalanceLabel)} on the bill matches this difference exactly -- mention it as confirming the excess.\n` : ""}${
     facts.taxFinding
       ? `Tax finding (CONFIRMED): the computed tax rate on this bill is ${facts.taxFinding.effectiveRatePercent.toFixed(2)}%, higher than the reference rate of ${facts.taxFinding.expectedRatePercent}%${facts.taxFinding.hsnPrefix ? ` for HSN ${facts.taxFinding.hsnPrefix}` : ""}${facts.taxFinding.sourceUrl ? ` (source: ${facts.taxFinding.sourceUrl})` : ""}. The difference above (Rs ${Math.abs(facts.gap).toFixed(2)}) is the possible excess this higher rate would add. This is a confirmed computed finding, but never state as fact that the provider made an error -- only that the rate should be confirmed.\n`
       : ""
-  }Tone: ${
+  }</bill_data>
+Tone: ${
     facts.expectedAmountGap
       ? `Soft and inquiry-based. Say the bill's printed total is ${facts.gap >= 0 ? "higher" : "lower"} than the amount the user expected, and ask the provider to explain what makes up the difference. Never call it an error, never say anything is wrong or incorrect, and never ask for a correction, a revised bill or a refund.`
       : tone === "confident"

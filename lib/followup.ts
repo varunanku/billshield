@@ -3,6 +3,7 @@
 // lives in groq.ts/openrouter.ts (answerFollowupQuestion), same as
 // extraction's provider split.
 import { LINE_ROLES, type BillLine, type LineRole } from "./bill-checks.ts";
+import { UNTRUSTED_NOTICE, q } from "./untrusted.ts";
 
 export type FollowupBillContext = {
   provider: string | null;
@@ -45,13 +46,13 @@ export function disputedLinesForChat(facts: {
 export function buildFollowupSystemPrompt(context: FollowupBillContext): string {
   const lines =
     context.lineItems.length > 0
-      ? context.lineItems.map((li, i) => `${i}: ${li.label} -- Rs ${li.amount.toFixed(2)} [${li.role}]`).join("\n")
+      ? context.lineItems.map((li, i) => `${i}: ${q(li.label)} -- Rs ${li.amount.toFixed(2)} [${li.role}]`).join("\n")
       : "(none extracted)";
   const disputed =
     context.disputedLines.length > 0
-      ? context.disputedLines.map((l) => `${l.label} (Rs ${l.amount.toFixed(2)})`).join(", ")
+      ? context.disputedLines.map((l) => `${q(l.label)} (Rs ${l.amount.toFixed(2)})`).join(", ")
       : "none";
-  const warnings = context.warnings.length > 0 ? context.warnings.join("\n") : "none";
+  const warnings = context.warnings.length > 0 ? context.warnings.map(q).join("\n") : "none";
   // The sign convention (gap = billedSum - amountPaid, negative = overpaid)
   // is an internal implementation detail of lib/verdict.ts -- never handed
   // to the model as a bare signed number it might just parrot back. Spelled
@@ -62,7 +63,7 @@ export function buildFollowupSystemPrompt(context: FollowupBillContext): string 
       : context.expectedAmount
         ? `Rs ${Math.abs(context.verdictGap).toFixed(2)} -- the printed total is this much ${context.verdictGap >= 0 ? "higher" : "lower"} than the Rs ${context.expectedAmount.promisedAmount.toFixed(2)} the user expected to pay. This is NOT a confirmed billing error -- describe it as "${context.verdictGap >= 0 ? "higher" : "lower"} than the amount you expected", never as an error or overcharge.${
             context.expectedAmount.matchedLineLabel
-              ? ` It matches the "${context.expectedAmount.matchedLineLabel}" line on the bill -- name that line when asked what explains the difference.`
+              ? ` It matches the ${q(context.expectedAmount.matchedLineLabel)} line on the bill -- name that line when asked what explains the difference.`
               : ""
           }`
       : context.verdictGap < 0
@@ -71,8 +72,11 @@ export function buildFollowupSystemPrompt(context: FollowupBillContext): string 
 
   return `You answer a user's questions about ONE specific bill, and may propose a correction if you spot a misread. Use ONLY the facts printed below -- never invent, total, or recompute a number that isn't already given here.
 
-Provider: ${context.provider ?? "unknown"}
-Bill date: ${context.billDate ?? "unknown"}
+${UNTRUSTED_NOTICE}
+
+<bill_data>
+Provider: ${context.provider ? q(context.provider) : "unknown"}
+Bill date: ${context.billDate ? q(context.billDate) : "unknown"}
 Printed total: Rs ${context.total.toFixed(2)}
 Line items (index: label -- amount [role]):
 ${lines}
@@ -82,6 +86,7 @@ Gap found (if any): ${gapDescription}
 Disputed/unexplained lines (the ones BillShield's checks actually matched -- never substitute a different line from the list above): ${disputed}
 Total tax (sum of this bill's tax lines, computed by BillShield's checks): Rs ${context.taxTotal.toFixed(2)}
 Other warnings BillShield's checks noticed: ${warnings}
+</bill_data>
 
 Rules:
 - You are BillShield's AI assistant. Refer to code-computed results (sums, the tax comparison, the verdict) as
@@ -186,8 +191,8 @@ export function buildHistoryResultTurn(
   const unit = request.metric === "units_consumed" ? "" : "Rs ";
   const content =
     result.count === 0
-      ? `No past bills found for "${request.provider}". Say so plainly -- don't estimate or guess a figure.`
-      : `Computed from the user's own last ${result.count} bill(s) for "${request.provider}" (metric: ${request.metric}): ` +
+      ? `No past bills found for ${q(request.provider)}. Say so plainly -- don't estimate or guess a figure.`
+      : `Computed from the user's own last ${result.count} bill(s) for ${q(request.provider)} (metric: ${request.metric}): ` +
         `most recent (${result.latestDate}) = ${unit}${result.latestValue}` +
         (result.averageBeforeLatest !== null ? `, average of the bills before that = ${unit}${result.averageBeforeLatest.toFixed(2)}` : ", no earlier bills to average") +
         `. Answer the user's original question using ONLY these numbers -- do not add, subtract, or estimate anything beyond what's given here. Respond in the same {"type": "answer", "text": string} JSON shape as before.`;
