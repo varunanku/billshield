@@ -201,6 +201,14 @@ export async function POST(request: Request) {
     );
   }
 
+  // The checks' reconciled total, for the monthly timeline (migration 0015).
+  // A separate best-effort update so a missing column never fails the save.
+  const { error: reconciledError } = await supabase
+    .from("bills")
+    .update({ reconciled_total: checks.effectiveTotal })
+    .eq("id", bill.id);
+  if (reconciledError) console.error("Reconciled total update failed:", reconciledError.message);
+
   if (units_consumed !== null) {
     const { error: metricError } = await supabase.from("bill_metrics").insert({
       bill_id: bill.id,

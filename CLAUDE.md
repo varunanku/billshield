@@ -26,20 +26,23 @@ Win condition: the user actually sends the message (or consciously chooses not t
 - LLM API called only from server routes
 - Secrets in local `.env` and Vercel Environment Variables only
 
-## Data model (eight tables)
+## Data model (ten tables and one view)
 
 Full column detail is in the BillShield submission document. Table names:
 
 - `users` (includes `full_name`)
-- `bills` (includes `category`)
+- `bills` (includes `category`, `reconciled_total`, and `provider_key`, which is generated from `provider_name` by `public.provider_key()`)
 - `line_items` (can hold an "Amount Paid" label for signed paid-vs-billed differences)
 - `promises`
 - `messages` (includes `action_taken`, `tone_preset_used`, `final_body`, `draft_kept_pct`; links back to the `line_items` row it disputes: the proof link)
 - `category_rates` (`category`, `rate_percent`, `rate_type`, `source_note`, `last_verified`)
 - `bill_metrics`
 - `message_events`
+- `bill_printed_history` (past months as printed on electricity/water bills; owner-only select/insert/delete, no update)
+- `rate_limit_hits` (server-only counter; RLS on with no user policies)
+- View `provider_monthly_timeline` (`security_invoker`, so it obeys the tables' RLS): one row per user, provider key and month
 
-RLS is on every table, proven by a 48-check two-user test (`scripts/rls-two-user-test.mjs`).
+RLS is on every table and the view obeys it, proven by a 61-check two-user test (`scripts/rls-two-user-test.mjs`). Migrations 0001–0015 are idempotent and run by hand in the Supabase SQL editor.
 
 Signed difference: code computes `amount_billed - amount_paid`. Positive means a dispute email to the provider. Negative means the user overpaid, so draft a refund request.
 
@@ -47,13 +50,28 @@ Signed difference: code computes `amount_billed - amount_paid`. Positive means a
 
 - `category_rates` is **India GST only**. Foreign VAT is out of scope. When no rate is confirmed, fall back to arithmetic-only checks and say so.
 - GST answers are confident (hard-coded table). Handling-charge and similar answers are informational and non-committal.
-- Recurring bills are compared month over month from the bills table (same provider, ordered by date); bill_metrics stores per-bill readings such as units consumed.
+- Recurring bills are compared month over month through the `provider_monthly_timeline` view, the single source for history in the chat and on My bills.
+  - Its month is `billing_period_end`, else `bill_date`. A saved (checked) bill always beats a printed row for its month, and among printed rows the newest printing wins.
+  - Missing months are absent, never zero.
+  - Every change, average, lowest and highest comes from the view, never from the AI.
+  - Provider names are matched by `provider_key` (lowercase, first two significant words). `bill_metrics` stores per-bill readings such as units consumed.
+- Printed payment history (electricity and water only) is never a line item and never part of the checks or verdict. Wherever it's shown, it's labelled "(as printed on your <Month> bill, not checked by BillShield)".
 - If something is unexplained, the email asks the **provider** to clarify, not the user.
 - One dispute email per bill, pointing at one line.
 - Follow-up questions are capped at 10 per bill, answered from the bill and the rates table.
 - Promise-based gaps (bill vs. what the user expected) are worded as questions to the provider, never as confirmed errors.
 - Tax-rate comparisons only fire when an HSN/SAC code is printed on the bill, and only report overcharges.
 - Uploads read the file into memory the moment it's picked (fixes Android Google Photos) and resize large photos before upload.
+- "Try a sample bill" runs a built-in bill through the real checks and verdict code in the browser, with the code-built template email. Nothing is uploaded, saved or sent to the AI; chat and "I've sent it" are off for it.
+
+## Security rules (keep these in place)
+
+- Every API route validates input with the zod schemas in `lib/schemas.ts` and returns 401 when signed out (the auth routes are public by nature).
+- Text read off a bill is untrusted. It reaches every prompt JSON-quoted inside a `<bill_data>` block with `UNTRUSTED_NOTICE` (`lib/untrusted.ts`).
+- Uploads are checked on the server by their first bytes. The bills bucket allows JPEG, PNG, WEBP and PDF up to 20 MB.
+- Sign-up and sign-in go through `/api/auth/*`: password 8–72 characters, trimmed name of up to 100 characters, normalised email.
+- Per-user and per-IP rate limits (`lib/rate-limit.ts`, Postgres counter) cover sign-up, sign-in, extraction, chat and email drafting. Uploads are capped at 30 per user per hour in the storage policy.
+- Security headers (CSP, X-Frame-Options DENY, Referrer-Policy, Permissions-Policy, nosniff) come from `lib/security-headers.ts`. The audit is in `docs/security-audit.md`.
 
 ## UI
 

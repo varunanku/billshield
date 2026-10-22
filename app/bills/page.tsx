@@ -6,7 +6,7 @@
 import { Suspense } from "react";
 import { createClient } from "@/lib/supabase/server";
 import { groupBillsByProvider } from "@/lib/history";
-import { mergeMonthlyHistory, monthOfBill, monthName, printedLabel, type PrintedMonth } from "@/lib/printed-history";
+import { TIMELINE_COLUMNS, toTimelineRow, timelineSummary, monthName, sourceLabel, type TimelineRow } from "@/lib/timeline";
 import Link from "next/link";
 
 function money(n: number) {
@@ -77,39 +77,23 @@ async function BillsList() {
   const supabase = await createClient();
   const { data: bills } = await supabase
     .from("bills")
-    .select("id, provider_name, bill_date, billing_period_start, total_amount, verdict_outcome")
+    .select("id, provider_name, bill_date, total_amount, verdict_outcome")
     .order("bill_date", { ascending: false });
 
-  // Past months printed on these bills (electricity/water). Best-effort:
-  // if the query fails, the page just shows the saved bills as before.
-  const { data: printedRows } = await supabase
-    .from("bill_printed_history")
-    .select("bill_id, period_label, period_start, amount, units, amount_paid, paid_on");
-  const billById = new Map((bills ?? []).map((b) => [b.id, b]));
-  const n = (v: unknown) => (v === null || v === undefined ? null : Number(v));
+  // This user's monthly timeline (provider_monthly_timeline, migration
+  // 0015; RLS-scoped through the view). Best-effort: if it fails, the page
+  // just shows the saved bills as before.
+  const { data: timelineRaw } = await supabase
+    .from("provider_monthly_timeline")
+    .select(TIMELINE_COLUMNS)
+    .order("month", { ascending: true });
+  const timeline = (timelineRaw ?? []).map((r) => toTimelineRow(r as unknown as Record<string, unknown>));
+  const keyByBillId = new Map(timeline.filter((r) => r.source === "checked").map((r) => [r.source_bill_id, r.provider_key]));
 
-  // Months that exist only as printed figures for a provider's bills --
-  // a month with a real saved bill always shows that bill instead.
-  function printedOnlyMonths(billIds: string[]) {
-    const ids = new Set(billIds);
-    const checked = billIds.map((id) => {
-      const b = billById.get(id)!;
-      return { month: monthOfBill(b), billDate: b.bill_date, total: Number(b.total_amount), units: null };
-    });
-    const printed: PrintedMonth[] = (printedRows ?? [])
-      .filter((r) => ids.has(r.bill_id))
-      .map((r) => ({
-        period_label: r.period_label,
-        period_start: r.period_start,
-        amount: n(r.amount),
-        units: n(r.units),
-        amount_paid: n(r.amount_paid),
-        paid_on: r.paid_on,
-        sourceBillDate: billById.get(r.bill_id)!.bill_date,
-      }));
-    return mergeMonthlyHistory(checked, printed)
-      .filter((m) => m.source === "printed")
-      .reverse();
+  // A provider group's timeline, found through any of its bills' keys.
+  function timelineForBills(billIds: string[]): TimelineRow[] {
+    const key = billIds.map((id) => keyByBillId.get(id)).find(Boolean);
+    return key ? timeline.filter((r) => r.provider_key === key) : [];
   }
 
   const groups = groupBillsByProvider(
@@ -162,22 +146,25 @@ async function BillsList() {
             ))}
           </div>
           {(() => {
-            const printed = printedOnlyMonths(g.bills.map((b) => b.id));
-            if (printed.length === 0) return null;
+            const rows = timelineForBills(g.bills.map((b) => b.id));
+            const summary = timelineSummary(rows);
+            const printed = rows.filter((m) => m.source === "printed").reverse();
+            if (!summary && printed.length === 0) return null;
             return (
               <div className="mt-3 flex flex-col gap-1 border-t border-border pt-3 text-xs text-text-muted">
-                <span className="font-medium">Earlier months, as printed on your bills</span>
+                {summary && <span className="text-sm">{summary}</span>}
+                {printed.length > 0 && <span className="font-medium">Earlier months, as printed on your bills</span>}
                 {printed.map((m) => (
                   <span key={m.month}>
                     {monthName(m.month)}:{" "}
                     {[
                       m.amount !== null ? `Rs ${money(m.amount)}` : null,
                       m.units !== null ? `${m.units} units` : null,
-                      m.amountPaid !== null ? `paid Rs ${money(m.amountPaid)}` : null,
+                      m.amount_paid !== null ? `paid Rs ${money(m.amount_paid)}` : null,
                     ]
                       .filter(Boolean)
                       .join(" · ")}{" "}
-                    -- {printedLabel(m.printedOn!)}
+                    {sourceLabel(m)}
                   </span>
                 ))}
               </div>

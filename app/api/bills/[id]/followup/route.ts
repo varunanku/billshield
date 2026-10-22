@@ -11,8 +11,7 @@ import {
   type ChatTurn,
   type FollowupReply,
 } from "@/lib/followup";
-import { computeHistoryQuery } from "@/lib/history";
-import { pastMonthsFor, type BillForHistory, type MonthEntry, type StoredPrintedRow } from "@/lib/printed-history";
+import { TIMELINE_COLUMNS, toTimelineRow, type TimelineRow } from "@/lib/timeline";
 import { computeTaxBreakdown, findMatchingRate, buildTaxBreakdownAddendum } from "@/lib/gst";
 import { answerFollowupQuestion as askGroq } from "@/lib/groq";
 import { answerFollowupQuestion as askOpenRouter } from "@/lib/openrouter";
@@ -84,11 +83,7 @@ export async function POST(request: Request, routeContext: { params: Promise<{ i
     }
 
     // RLS-scoped: this also confirms the bill belongs to the signed-in user.
-    const { data: bill, error: billError } = await supabase
-      .from("bills")
-      .select("id, category, provider_name, bill_date, billing_period_start, total_amount")
-      .eq("id", billId)
-      .single();
+    const { data: bill, error: billError } = await supabase.from("bills").select("id, category").eq("id", billId).single();
     if (billError || !bill) {
       return json({ success: false, reason: "unauthorized", message: "That bill isn't in your account. Open one of your own bills from My bills." }, 401);
     }
@@ -142,8 +137,8 @@ export async function POST(request: Request, routeContext: { params: Promise<{ i
       gstAddendum = buildTaxBreakdownAddendum(breakdown, matchingRate);
     }
 
-    const pastMonths = await loadPastMonths(supabase, bill);
-    const systemPrompt = buildFollowupSystemPrompt({ ...context, pastMonths }) + gstAddendum;
+    const timeline = await loadTimeline(supabase, billId);
+    const systemPrompt = buildFollowupSystemPrompt({ ...context, timeline }) + gstAddendum;
     const result = await answerFollowupQuestion(systemPrompt, history);
 
     if (!result.ok) {
@@ -167,32 +162,12 @@ export async function POST(request: Request, routeContext: { params: Promise<{ i
     // same RLS-enforcing client as everything else in this route, so it
     // can only ever see this signed-in user's own bills (hard rule 4).
     if (reply.type === "get_history") {
-      const { provider, metric, months } = reply.request;
-      const { data: matchingBills } = await supabase
-        .from("bills")
-        .select("id, bill_date, total_amount")
-        .ilike("provider_name", `%${provider}%`)
-        .order("bill_date", { ascending: false })
-        .limit(months);
-
-      let values: { billDate: string; value: number }[] = [];
-      if (metric === "total") {
-        values = (matchingBills ?? []).map((b) => ({ billDate: b.bill_date, value: Number(b.total_amount) }));
-      } else if (matchingBills && matchingBills.length > 0) {
-        const { data: metricRows } = await supabase
-          .from("bill_metrics")
-          .select("bill_id, value")
-          .eq("metric", "units_consumed")
-          .in(
-            "bill_id",
-            matchingBills.map((b) => b.id)
-          );
-        const byBillId = new Map((metricRows ?? []).map((m) => [m.bill_id, Number(m.value)]));
-        values = matchingBills.filter((b) => byBillId.has(b.id)).map((b) => ({ billDate: b.bill_date, value: byBillId.get(b.id)! }));
-      }
-
-      const historyResult = computeHistoryQuery(values);
-      const followupTurn = buildHistoryResultTurn(reply.request, historyResult);
+      // The provider the model named -> the same normalised key the view
+      // uses (public.provider_key), then that provider's most recent months.
+      const { provider, months } = reply.request;
+      const { data: key } = await supabase.rpc("provider_key", { p_name: provider });
+      const rows = typeof key === "string" ? (await timelineFor(supabase, key)).slice(-months) : [];
+      const followupTurn = buildHistoryResultTurn(reply.request, rows);
       const secondResult = await answerFollowupQuestion(systemPrompt, [...history, { role: "assistant", content: result.text }, followupTurn]);
       reply = secondResult.ok ? parseFollowupReply(secondResult.text) : { type: "answer", text: "Couldn't look up your past bills just now. Ask again in a moment." };
       // However the model phrased it, this turn is answering the user's
@@ -242,56 +217,31 @@ function validatePayload(
 }
 
 type SupabaseServer = Awaited<ReturnType<typeof createClient>>;
-type BillRow = { id: string; provider_name: string; bill_date: string; billing_period_start: string | null; total_amount: number | string };
 
-// This user's own saved bills from the same provider, plus every history
-// row those bills printed, merged into past months (RLS-scoped, so only
-// ever the signed-in user's rows). Best-effort: any query failure (e.g.
-// migration 0014 not run yet) just means fewer past months, never an error.
-async function loadPastMonths(supabase: SupabaseServer, bill: BillRow): Promise<MonthEntry[]> {
-  const toHistory = (b: Omit<BillRow, "provider_name">, units: Map<string, number>): BillForHistory => ({
-    id: b.id,
-    bill_date: b.bill_date,
-    billing_period_start: b.billing_period_start,
-    total: Number(b.total_amount),
-    units: units.get(b.id) ?? null,
-  });
-
-  // "Unknown provider" is a storage placeholder -- never group bills by it.
-  let rows: Omit<BillRow, "provider_name">[] = [bill];
-  if (bill.provider_name !== "Unknown provider") {
-    const { data } = await supabase
-      .from("bills")
-      .select("id, bill_date, billing_period_start, total_amount")
-      .eq("provider_name", bill.provider_name)
-      .order("bill_date", { ascending: false })
-      .limit(60);
-    rows = data && data.some((b) => b.id === bill.id) ? data : [bill, ...(data ?? [])];
+// One provider's months from public.provider_monthly_timeline (migration
+// 0015), oldest first. The view is security_invoker, so RLS limits it to
+// this signed-in user's own rows. Best-effort: [] on any error.
+async function timelineFor(supabase: SupabaseServer, providerKey: string): Promise<TimelineRow[]> {
+  const { data, error } = await supabase
+    .from("provider_monthly_timeline")
+    .select(TIMELINE_COLUMNS)
+    .eq("provider_key", providerKey)
+    .order("month", { ascending: true });
+  if (error) {
+    console.error("Timeline fetch failed:", error.message);
+    return [];
   }
-  const ids = rows.map((b) => b.id);
+  return (data ?? []).map((r) => toTimelineRow(r as unknown as Record<string, unknown>));
+}
 
-  const { data: metricRows } = await supabase
-    .from("bill_metrics")
-    .select("bill_id, value")
-    .eq("metric", "units_consumed")
-    .in("bill_id", ids);
-  const units = new Map((metricRows ?? []).map((m) => [m.bill_id as string, Number(m.value)]));
-
-  const { data: printedRows, error: printedError } = await supabase
-    .from("bill_printed_history")
-    .select("bill_id, period_label, period_start, amount, units, amount_paid, paid_on")
-    .in("bill_id", ids);
-  if (printedError) console.error("Printed history fetch failed:", printedError.message);
-  const n = (v: unknown) => (v === null || v === undefined ? null : Number(v));
-  const printed: StoredPrintedRow[] = (printedRows ?? []).map((r) => ({
-    bill_id: r.bill_id,
-    period_label: r.period_label,
-    period_start: r.period_start,
-    amount: n(r.amount),
-    units: n(r.units),
-    amount_paid: n(r.amount_paid),
-    paid_on: r.paid_on,
-  }));
-
-  return pastMonthsFor(toHistory(bill, units), rows.map((b) => toHistory(b, units)), printed);
+// This bill's provider timeline, split into earlier months and this bill's
+// own month. null when the bill has no provider key (unknown provider) or
+// the view isn't there yet.
+async function loadTimeline(supabase: SupabaseServer, billId: string): Promise<{ past: TimelineRow[]; current: TimelineRow | null } | undefined> {
+  const { data, error } = await supabase.from("bills").select("provider_key").eq("id", billId).single();
+  if (error || !data?.provider_key) return undefined;
+  const rows = await timelineFor(supabase, data.provider_key);
+  const current = rows.find((r) => r.source === "checked" && r.source_bill_id === billId) ?? null;
+  const past = current ? rows.filter((r) => r.month < current.month) : rows.filter((r) => r.source_bill_id !== billId);
+  return { past, current };
 }

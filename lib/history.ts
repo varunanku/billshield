@@ -38,23 +38,3 @@ export function groupBillsByProvider(bills: BillSummary[]): ProviderGroup[] {
   }
   return groups.sort((a, b) => a.provider.localeCompare(b.provider));
 }
-
-// For the history-aware chat's get_history tool call: the model asks for
-// a provider/metric/months; the route queries that user's own RLS-scoped
-// rows and hands this computed result back for the model to phrase, never
-// a raw row list it could recompute or misstate.
-export type HistoryQueryResult = {
-  count: number;
-  averageBeforeLatest: number | null; // average of every bill strictly before the most recent one
-  latestValue: number | null;
-  latestDate: string | null;
-};
-
-export function computeHistoryQuery(values: { billDate: string; value: number }[]): HistoryQueryResult {
-  if (values.length === 0) return { count: 0, averageBeforeLatest: null, latestValue: null, latestDate: null };
-  const sorted = [...values].sort((a, b) => a.billDate.localeCompare(b.billDate));
-  const latest = sorted[sorted.length - 1];
-  const earlier = sorted.slice(0, -1);
-  const averageBeforeLatest = earlier.length > 0 ? earlier.reduce((s, v) => s + v.value, 0) / earlier.length : null;
-  return { count: values.length, averageBeforeLatest, latestValue: latest.value, latestDate: latest.billDate };
-}

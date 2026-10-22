@@ -4,7 +4,7 @@
 // extraction's provider split.
 import { LINE_ROLES, type BillLine, type LineRole } from "./bill-checks.ts";
 import { UNTRUSTED_NOTICE, q } from "./untrusted.ts";
-import { averageAmount, describeMonth, type MonthEntry } from "./printed-history.ts";
+import { describeTimeline, describeTimelineRow, type TimelineRow } from "./timeline.ts";
 
 export type FollowupBillContext = {
   provider: string | null;
@@ -21,31 +21,12 @@ export type FollowupBillContext = {
   // user expected (lib/verdict.ts, reason "promise_mismatch") -- verdictGap
   // is then that gap, not an arithmetic/payment one.
   expectedAmount?: { promisedAmount: number; matchedLineLabel: string | null } | null;
-  // Past months for this provider, oldest first -- built server-side by
-  // the follow-up route from the user's own saved bills and the history
-  // tables those bills printed (lib/printed-history.ts#pastMonthsFor).
-  // Never taken from the client.
-  pastMonths?: MonthEntry[];
+  // This provider's monthly timeline (public.provider_monthly_timeline,
+  // migration 0015): earlier months, oldest first, and this bill's own
+  // month. Read server-side by the follow-up route -- never taken from the
+  // client. Every change/average/min/max in it was computed by the view.
+  timeline?: { past: TimelineRow[]; current: TimelineRow | null };
 };
-
-// The past-months block of the chat facts. Every printed figure carries
-// its "as printed on your X bill (not checked by BillShield)" label, and
-// the average and this bill's difference from it are computed here, so
-// "is this higher than usual?" never needs the model to do arithmetic.
-export function describePastMonths(pastMonths: MonthEntry[] | undefined, total: number): string {
-  if (!pastMonths || pastMonths.length === 0) return "none on record";
-  const lines = pastMonths.map((m) => `- ${describeMonth(m)}`);
-  const avg = averageAmount(pastMonths);
-  if (avg) {
-    const diff = total - avg.average;
-    lines.push(
-      `Average billed amount over those ${avg.count} month(s), computed by BillShield's checks: Rs ${avg.average.toFixed(2)}` +
-        (avg.printedCount > 0 ? ` (${avg.printedCount} of them printed figures, not checked by BillShield)` : "") +
-        `. This bill's printed total is Rs ${Math.abs(diff).toFixed(2)} ${diff >= 0 ? "higher" : "lower"} than that average.`
-    );
-  }
-  return lines.join("\n");
-}
 
 export type ChatTurn = { role: "user" | "assistant"; content: string };
 
@@ -113,13 +94,14 @@ Total tax (sum of this bill's tax lines, computed by BillShield's checks): Rs ${
 Other warnings BillShield's checks noticed: ${warnings}
 </bill_data>
 
-Past months for this provider (oldest first, prepared by BillShield's code -- use these for "is this higher than
-usual?" or "how does this compare?" questions, even if this is the user's first saved bill):
-${describePastMonths(context.pastMonths, context.total)}
+Monthly timeline for this provider (oldest first; every change, average, lowest and highest was computed by
+BillShield's code -- use these for "is this higher than usual?" or "how does this compare?", even on a first bill):
+${context.timeline ? describeTimeline(context.timeline.past, context.timeline.current) : "none on record"}
 
 Rules:
-- Whenever you mention a past-month figure that is labelled "as printed on your ... bill (not checked by
-  BillShield)", repeat that label with it, word for word -- never present a printed figure as checked.
+- Never calculate a change, average, percentage, lowest or highest yourself -- quote the one the timeline gives.
+- Whenever you cite a month labelled "(as printed on your <Month> bill, not checked by BillShield)", repeat that
+  label with it, word for word -- never present a printed figure as checked.
 - You are BillShield's AI assistant. Refer to code-computed results (sums, the tax comparison, the verdict) as
   "BillShield's checks", never as "the app".
 - Answer only about this bill's contents and BillShield's checks (the verdict and warnings) above.
@@ -155,8 +137,8 @@ Only set the new_* fields relevant to what's changing; leave the rest null.
 To ask the app to look up this user's OWN past bills before you answer (only when the question genuinely needs
 history, e.g. "how does this compare to last few months" or "what's my average usage" -- never for anything
 answerable from the single bill above):
-{"type": "get_history", "provider": string (which provider's bills to look up -- usually this bill's own provider unless the user names a different one), "metric": "total" | "units_consumed", "months": number (how many of that provider's most recent bills to consider, typically 3-12)}
-You will then be given the computed figures and asked to phrase the final answer from those alone -- you still never compute the comparison yourself.`;
+{"type": "get_history", "provider": string (which provider's bills to look up -- usually this bill's own provider unless the user names a different one), "metric": "total" | "units_consumed", "months": number (how many of that provider's most recent months to consider, typically 3-12)}
+You will then be given that provider's monthly timeline rows and asked to phrase the final answer from those alone -- you still never compute the comparison yourself.`;
 }
 
 export type Correction = {
@@ -213,20 +195,20 @@ export function parseFollowupReply(raw: string): FollowupReply {
 }
 
 // The follow-up turn fed back to the model after the route has resolved a
-// get_history request in code -- the model phrases the answer from these
-// numbers alone, it never saw (and can't recompute) the underlying rows.
-export function buildHistoryResultTurn(
-  request: HistoryRequest,
-  result: { count: number; averageBeforeLatest: number | null; latestValue: number | null; latestDate: string | null }
-): ChatTurn {
-  const unit = request.metric === "units_consumed" ? "" : "Rs ";
+// get_history request: that provider's rows from the monthly timeline view,
+// each with its source label and the view's own computed comparisons. The
+// model phrases the answer from these alone.
+export function buildHistoryResultTurn(request: HistoryRequest, rows: TimelineRow[]): ChatTurn {
   const content =
-    result.count === 0
-      ? `No past bills found for ${q(request.provider)}. Say so plainly -- don't estimate or guess a figure.`
-      : `Computed from the user's own last ${result.count} bill(s) for ${q(request.provider)} (metric: ${request.metric}): ` +
-        `most recent (${result.latestDate}) = ${unit}${result.latestValue}` +
-        (result.averageBeforeLatest !== null ? `, average of the bills before that = ${unit}${result.averageBeforeLatest.toFixed(2)}` : ", no earlier bills to average") +
-        `. Answer the user's original question using ONLY these numbers -- do not add, subtract, or estimate anything beyond what's given here. Respond in the same {"type": "answer", "text": string} JSON shape as before.`;
+    rows.length === 0
+      ? `No saved months found for ${q(request.provider)}. Say so plainly -- don't estimate or guess a figure.`
+      : `Monthly timeline for ${q(request.provider)} (oldest first, ${rows.length} month(s); the user asked about ` +
+        `${request.metric === "units_consumed" ? "units consumed" : "billed amounts"}). Every change, average, lowest and ` +
+        `highest below was computed by BillShield's code:\n${rows.map(describeTimelineRow).join("\n")}\n` +
+        `Answer the user's original question using ONLY these rows -- never add, subtract, average or estimate ` +
+        `anything yourself. Whenever you cite a month labelled "(as printed on your <Month> bill, not checked by ` +
+        `BillShield)", include that label word for word. Respond in the same {"type": "answer", "text": string} JSON ` +
+        `shape as before.`;
   return { role: "user", content };
 }
 

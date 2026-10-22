@@ -152,6 +152,13 @@ export async function POST(request: Request, routeContext: { params: Promise<{ i
       await supabase.from("bills").update(verdictSnapshot).eq("id", billId);
     }
 
+    // Same best-effort reconciled total as confirm (monthly timeline, 0015).
+    const { error: reconciledError } = await supabase
+      .from("bills")
+      .update({ reconciled_total: checks.effectiveTotal })
+      .eq("id", billId);
+    if (reconciledError) console.error("Reconciled total update failed:", reconciledError.message);
+
     const persistedLines: PersistedLine[] = after.lines.map((l) => ({
       label: l.role === "payment" ? "Amount Paid" : l.label,
       amount: l.role === "discount" ? -l.amount : l.amount,

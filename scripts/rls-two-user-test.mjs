@@ -267,6 +267,34 @@ async function dataChecks() {
   // bill_printed_history (0014): owner-only select/insert/delete, no update.
   await printedHistoryChecks(missing, blocked);
 
+  // provider_monthly_timeline (0015): a security_invoker view, so it must
+  // obey the RLS of bills / bill_metrics / bill_printed_history underneath.
+  // A's bill appears once as its own checked month (its printed-history row
+  // from the checks above is a separate, printed month).
+  const ownTimeline = await clientA
+    .from("provider_monthly_timeline")
+    .select("user_id, source, month, source_bill_id")
+    .eq("source_bill_id", billA.id);
+  const ownRows = ownTimeline.data ?? [];
+  const ownOk =
+    !ownTimeline.error && ownRows.filter((r) => r.source === "checked").length === 1 && ownRows.every((r) => r.user_id === userA.id);
+  check(
+    "user A sees own bill in the monthly timeline",
+    ownOk,
+    missing(ownTimeline) ? "migration 0015 not applied" : ownOk ? undefined : ownTimeline.error?.message ?? JSON.stringify(ownRows)
+  );
+  const leakedTimeline = await clientB.from("provider_monthly_timeline").select("user_id").eq("user_id", userA.id);
+  const allTimelineForB = await clientB.from("provider_monthly_timeline").select("user_id");
+  check(
+    "user B gets zero timeline rows for A's data",
+    !missing(leakedTimeline) &&
+      !leakedTimeline.error &&
+      (leakedTimeline.data ?? []).length === 0 &&
+      !allTimelineForB.error &&
+      (allTimelineForB.data ?? []).every((r) => r.user_id === userB.id),
+    missing(leakedTimeline) ? "migration 0015 not applied" : undefined
+  );
+
   // category_rates is hand-maintained reference data: any authenticated
   // user can read it, but only the service role (bypassing RLS) writes it --
   // there is no insert/update policy at all, so this isn't even ownership-
