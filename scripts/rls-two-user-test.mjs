@@ -264,6 +264,9 @@ async function dataChecks() {
     missing(rpcLimit) ? "migration 0013 not applied" : undefined
   );
 
+  // bill_printed_history (0014): owner-only select/insert/delete, no update.
+  await printedHistoryChecks(missing, blocked);
+
   // category_rates is hand-maintained reference data: any authenticated
   // user can read it, but only the service role (bypassing RLS) writes it --
   // there is no insert/update policy at all, so this isn't even ownership-
@@ -304,6 +307,60 @@ async function dataChecks() {
     "user A can still select own message_event, unchanged",
     !ownEvent.error && ownEvent.data?.id === eventA.id && Number(ownEvent.data?.draft_kept_pct) === 100
   );
+}
+
+const PRINTED_HISTORY_CHECKS = [
+  "user A can insert printed history on own bill",
+  "user B cannot select A's printed history",
+  "user B cannot insert printed history into A's bill",
+  "user B cannot insert printed history spoofing A's user_id",
+  "user B cannot delete A's printed history",
+  "user A cannot update own printed history (no update policy)",
+  "user A can still select own printed history, unchanged",
+  "user A can delete own printed history",
+];
+
+async function printedHistoryChecks(missing, blocked) {
+  const row = { bill_id: billA.id, user_id: userA.id, period_label: "Mar 2026", period_start: "2026-03-01", amount: 1700 };
+  const ins = await clientA.from("bill_printed_history").insert(row).select().single();
+  if (ins.error && missing(ins)) {
+    for (const name of PRINTED_HISTORY_CHECKS) check(name, false, "migration 0014 not applied");
+    return;
+  }
+  check(PRINTED_HISTORY_CHECKS[0], !ins.error, ins.error?.message);
+  const historyA = ins.data;
+  const id = historyA?.id ?? "00000000-0000-0000-0000-000000000000";
+
+  const sel = await clientB.from("bill_printed_history").select("*").eq("bill_id", billA.id);
+  check(PRINTED_HISTORY_CHECKS[1], denied(sel));
+
+  const insAsB = await clientB
+    .from("bill_printed_history")
+    .insert({ ...row, user_id: userB.id, period_label: "Apr 2026" })
+    .select();
+  check(PRINTED_HISTORY_CHECKS[2], blocked(insAsB));
+
+  const insSpoof = await clientB.from("bill_printed_history").insert({ ...row, period_label: "May 2026" }).select();
+  check(PRINTED_HISTORY_CHECKS[3], blocked(insSpoof));
+
+  const delByB = await clientB.from("bill_printed_history").delete().eq("id", id).select();
+  check(PRINTED_HISTORY_CHECKS[4], denied(delByB));
+
+  const upd = await clientA.from("bill_printed_history").update({ amount: 1 }).eq("id", id).select();
+  check(PRINTED_HISTORY_CHECKS[5], blocked(upd));
+
+  const own = await clientA.from("bill_printed_history").select("*").eq("id", id).single();
+  check(PRINTED_HISTORY_CHECKS[6], !own.error && Number(own.data?.amount) === 1700);
+
+  const extra = await clientA
+    .from("bill_printed_history")
+    .insert({ ...row, period_label: "Feb 2026", period_start: "2026-02-01" })
+    .select()
+    .single();
+  const delOwn = extra.data
+    ? await clientA.from("bill_printed_history").delete().eq("id", extra.data.id).select()
+    : { data: [] };
+  check(PRINTED_HISTORY_CHECKS[7], Array.isArray(delOwn.data) && delOwn.data.length === 1, extra.error?.message);
 }
 
 async function storageChecks() {

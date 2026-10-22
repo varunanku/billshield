@@ -4,6 +4,7 @@
 // extraction's provider split.
 import { LINE_ROLES, type BillLine, type LineRole } from "./bill-checks.ts";
 import { UNTRUSTED_NOTICE, q } from "./untrusted.ts";
+import { averageAmount, describeMonth, type MonthEntry } from "./printed-history.ts";
 
 export type FollowupBillContext = {
   provider: string | null;
@@ -20,7 +21,31 @@ export type FollowupBillContext = {
   // user expected (lib/verdict.ts, reason "promise_mismatch") -- verdictGap
   // is then that gap, not an arithmetic/payment one.
   expectedAmount?: { promisedAmount: number; matchedLineLabel: string | null } | null;
+  // Past months for this provider, oldest first -- built server-side by
+  // the follow-up route from the user's own saved bills and the history
+  // tables those bills printed (lib/printed-history.ts#pastMonthsFor).
+  // Never taken from the client.
+  pastMonths?: MonthEntry[];
 };
+
+// The past-months block of the chat facts. Every printed figure carries
+// its "as printed on your X bill (not checked by BillShield)" label, and
+// the average and this bill's difference from it are computed here, so
+// "is this higher than usual?" never needs the model to do arithmetic.
+export function describePastMonths(pastMonths: MonthEntry[] | undefined, total: number): string {
+  if (!pastMonths || pastMonths.length === 0) return "none on record";
+  const lines = pastMonths.map((m) => `- ${describeMonth(m)}`);
+  const avg = averageAmount(pastMonths);
+  if (avg) {
+    const diff = total - avg.average;
+    lines.push(
+      `Average billed amount over those ${avg.count} month(s), computed by BillShield's checks: Rs ${avg.average.toFixed(2)}` +
+        (avg.printedCount > 0 ? ` (${avg.printedCount} of them printed figures, not checked by BillShield)` : "") +
+        `. This bill's printed total is Rs ${Math.abs(diff).toFixed(2)} ${diff >= 0 ? "higher" : "lower"} than that average.`
+    );
+  }
+  return lines.join("\n");
+}
 
 export type ChatTurn = { role: "user" | "assistant"; content: string };
 
@@ -88,7 +113,13 @@ Total tax (sum of this bill's tax lines, computed by BillShield's checks): Rs ${
 Other warnings BillShield's checks noticed: ${warnings}
 </bill_data>
 
+Past months for this provider (oldest first, prepared by BillShield's code -- use these for "is this higher than
+usual?" or "how does this compare?" questions, even if this is the user's first saved bill):
+${describePastMonths(context.pastMonths, context.total)}
+
 Rules:
+- Whenever you mention a past-month figure that is labelled "as printed on your ... bill (not checked by
+  BillShield)", repeat that label with it, word for word -- never present a printed figure as checked.
 - You are BillShield's AI assistant. Refer to code-computed results (sums, the tax comparison, the verdict) as
   "BillShield's checks", never as "the app".
 - Answer only about this bill's contents and BillShield's checks (the verdict and warnings) above.

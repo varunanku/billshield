@@ -152,3 +152,53 @@ export function printedLabel(sourceBillDate: string): string {
   const name = MONTH_NAMES[Number(sourceBillDate.slice(5, 7)) - 1] ?? "earlier";
   return `as printed on your ${name} bill (not checked by BillShield)`;
 }
+
+// --- Past months for one bill (chat facts, My bills) --------------------
+
+export type BillForHistory = {
+  id: string;
+  bill_date: string;
+  billing_period_start: string | null;
+  total: number;
+  units: number | null;
+};
+export type StoredPrintedRow = PrintedHistoryRow & { bill_id: string };
+
+// The months before `current`, merged from the user's own saved bills for
+// the same provider (checked) and every row those bills printed. `bills`
+// should include `current` itself, so its own month is taken by the real
+// bill and then left out as "not a past month".
+export function pastMonthsFor(current: BillForHistory, bills: BillForHistory[], printedRows: StoredPrintedRow[]): MonthEntry[] {
+  const dateById = new Map(bills.map((b) => [b.id, b.bill_date]));
+  const checked = bills.map((b) => ({ month: monthOfBill(b), billDate: b.bill_date, total: b.total, units: b.units }));
+  const printed = printedRows
+    .filter((r) => dateById.has(r.bill_id))
+    .map((r) => ({ ...r, sourceBillDate: dateById.get(r.bill_id)! }));
+  const currentMonth = monthOfBill(current);
+  return mergeMonthlyHistory(checked, printed).filter((m) => m.month < currentMonth);
+}
+
+// Average billed amount over the months that have one, and how many of
+// those are printed (unchecked) figures. Computed here so the chat never
+// has to.
+export function averageAmount(months: MonthEntry[]): { average: number; count: number; printedCount: number } | null {
+  const withAmount = months.filter((m) => m.amount !== null);
+  if (withAmount.length === 0) return null;
+  const average = withAmount.reduce((s, m) => s + (m.amount as number), 0) / withAmount.length;
+  return {
+    average: Math.round(average * 100) / 100,
+    count: withAmount.length,
+    printedCount: withAmount.filter((m) => m.source === "printed").length,
+  };
+}
+
+// One line per month for the chat facts and My bills, carrying its label.
+export function describeMonth(m: MonthEntry): string {
+  const parts = [
+    m.amount !== null ? `Rs ${m.amount.toFixed(2)}` : null,
+    m.units !== null ? `${m.units} units` : null,
+    m.amountPaid !== null ? `paid Rs ${m.amountPaid.toFixed(2)}` : null,
+  ].filter(Boolean);
+  const source = m.source === "printed" && m.printedOn ? printedLabel(m.printedOn) : "from a bill you saved, checked by BillShield";
+  return `${monthName(m.month)}: ${parts.join(", ")} -- ${source}`;
+}

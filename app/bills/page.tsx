@@ -6,6 +6,7 @@
 import { Suspense } from "react";
 import { createClient } from "@/lib/supabase/server";
 import { groupBillsByProvider } from "@/lib/history";
+import { mergeMonthlyHistory, monthOfBill, monthName, printedLabel, type PrintedMonth } from "@/lib/printed-history";
 import Link from "next/link";
 
 function money(n: number) {
@@ -76,8 +77,40 @@ async function BillsList() {
   const supabase = await createClient();
   const { data: bills } = await supabase
     .from("bills")
-    .select("id, provider_name, bill_date, total_amount, verdict_outcome")
+    .select("id, provider_name, bill_date, billing_period_start, total_amount, verdict_outcome")
     .order("bill_date", { ascending: false });
+
+  // Past months printed on these bills (electricity/water). Best-effort:
+  // if the query fails, the page just shows the saved bills as before.
+  const { data: printedRows } = await supabase
+    .from("bill_printed_history")
+    .select("bill_id, period_label, period_start, amount, units, amount_paid, paid_on");
+  const billById = new Map((bills ?? []).map((b) => [b.id, b]));
+  const n = (v: unknown) => (v === null || v === undefined ? null : Number(v));
+
+  // Months that exist only as printed figures for a provider's bills --
+  // a month with a real saved bill always shows that bill instead.
+  function printedOnlyMonths(billIds: string[]) {
+    const ids = new Set(billIds);
+    const checked = billIds.map((id) => {
+      const b = billById.get(id)!;
+      return { month: monthOfBill(b), billDate: b.bill_date, total: Number(b.total_amount), units: null };
+    });
+    const printed: PrintedMonth[] = (printedRows ?? [])
+      .filter((r) => ids.has(r.bill_id))
+      .map((r) => ({
+        period_label: r.period_label,
+        period_start: r.period_start,
+        amount: n(r.amount),
+        units: n(r.units),
+        amount_paid: n(r.amount_paid),
+        paid_on: r.paid_on,
+        sourceBillDate: billById.get(r.bill_id)!.bill_date,
+      }));
+    return mergeMonthlyHistory(checked, printed)
+      .filter((m) => m.source === "printed")
+      .reverse();
+  }
 
   const groups = groupBillsByProvider(
     (bills ?? []).map((b) => ({
@@ -124,6 +157,28 @@ async function BillsList() {
               </div>
             ))}
           </div>
+          {(() => {
+            const printed = printedOnlyMonths(g.bills.map((b) => b.id));
+            if (printed.length === 0) return null;
+            return (
+              <div className="mt-3 flex flex-col gap-1 border-t border-border pt-3 text-xs text-text-muted">
+                <span className="font-medium">Earlier months, as printed on your bills</span>
+                {printed.map((m) => (
+                  <span key={m.month}>
+                    {monthName(m.month)}:{" "}
+                    {[
+                      m.amount !== null ? `Rs ${money(m.amount)}` : null,
+                      m.units !== null ? `${m.units} units` : null,
+                      m.amountPaid !== null ? `paid Rs ${money(m.amountPaid)}` : null,
+                    ]
+                      .filter(Boolean)
+                      .join(" · ")}{" "}
+                    -- {printedLabel(m.printedOn!)}
+                  </span>
+                ))}
+              </div>
+            );
+          })()}
         </section>
       ))}
     </div>
